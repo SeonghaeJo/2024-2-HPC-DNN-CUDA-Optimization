@@ -6,24 +6,19 @@
   Total number of threads = n * 16
 */
 
-#define EMB_SENTENCES 8
+#define EMB_BLOCKDIM 256
 
 __global__ void embedding_kernel(int *in, float *w, float *out, int n, int s, int H) {
-  int tid = blockIdx.x * (blockDim.x * blockDim.y) + threadIdx.y * blockDim.x + threadIdx.x;
-  if (tid >= n * s) {
-    return;
-  }
-  int widx = in[tid];
-  out += tid * H;
-  for (int i = 0; i < H; i++) {
-    out[i] = w[widx * H + i];
-  }
+  int word = in[blockIdx.z * s + blockIdx.y];
+  int emb_idx = blockIdx.x * EMB_BLOCKDIM + threadIdx.x;
+  out[blockIdx.z * s * H + blockIdx.y * H + emb_idx] = w[word * H + emb_idx]; 
 }
 
 /* Embedding
- * @param [in1]  in: [NUM_SENTENCES / NUM_GPUS, s]
+ * @param [in1]  in: [n, s]
  * @param [in2]   w: [NUM_VOCAB, H]
- * @param [out] out: [NUM_SENTENCES / NUM_GPUS, s, H]
+ * @param [out] out: [n, s, H]
+ * 'n' is NUM_SENTENCES / NUM_GPUS (4096)
  * 's' is the sequence length (16)
  * 'H' is the embedding dimension (4096)
  */
@@ -32,10 +27,14 @@ void Embedding(int *in, Tensor* w, Tensor *out) {
   size_t s = out->shape[1];
   size_t H = out->shape[2];
 
-  dim3 blockDim(s, EMB_SENTENCES, 1);
-  dim3 gridDim(n / EMB_SENTENCES, 1, 1);
+  dim3 blockDim(EMB_BLOCKDIM, 1, 1);
+  dim3 gridDim(H / EMB_BLOCKDIM, s, n);
   embedding_kernel<<<gridDim, blockDim>>>(in, w->buf, out->buf, n, s, H);
   CHECK_CUDA(cudaDeviceSynchronize());
+}
+
+__global__ void permute_kernel() {
+  
 }
 
 /* Permute
