@@ -33,23 +33,30 @@ void Embedding(int *in, Tensor* w, Tensor *out) {
   CHECK_CUDA(cudaDeviceSynchronize());
 }
 
-__global__ void permute_kernel() {
-  
+
+#define PERM_BLOCKDIM 256
+
+__global__ void permute_kernel(float *in, float *out, int n, int s, int H) {
+  int x = blockIdx.x * PERM_BLOCKDIM + threadIdx.x;
+  int y = blockIdx.y;
+  int z = blockIdx.z;
+  out[z * s * H + x * s + y] = in[z * s * H + y * H + x];
 }
 
 /* Permute
- * @param [in]   in: [M, N]
- * @param [out] out: [N, M]
+ * @param [in]   in: [n, s, H] = [4096, 16, 4096]
+ * @param [out] out: [n, H, s]
  */
 void Permute(Tensor *in, Tensor *out) {
-  size_t s = in->shape[0];
-  size_t H = in->shape[1];
+  size_t n = in->shape[0];
+  size_t s = in->shape[1];
+  size_t H = in->shape[2];
 
-  for (size_t i = 0; i < s; i++) {
-    for (size_t j = 0; j < H; j++) {
-      out->buf[j * s + i] = in->buf[i * H + j];
-    }
-  }
+  dim3 blockDim(PERM_BLOCKDIM, 1, 1);
+  dim3 gridDim(H / PERM_BLOCKDIM, s, n);
+
+  permute_kernel<<<gridDim, blockDim>>>(in->buf, out->buf, n, s, H);
+  CHECK_CUDA(cudaDeviceSynchronize());
 }
 
 /* Conv1D 
