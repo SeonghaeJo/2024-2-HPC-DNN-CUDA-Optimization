@@ -45,7 +45,7 @@ __global__ void permute_kernel(float *in, float *out, int n, int s, int H) {
 
 /* Permute
  * @param [in]   in: [n, s, H] = [4096, 16, 4096]
- * @param [out] out: [n, H, s]
+ * @param [out] out: [n, H, s] = [4096, 4096, 16]
  */
 void Permute(Tensor *in, Tensor *out) {
   size_t n = in->shape[0];
@@ -59,11 +59,60 @@ void Permute(Tensor *in, Tensor *out) {
   CHECK_CUDA(cudaDeviceSynchronize());
 }
 
+
+#define CONV_TS 64
+// Number of Tile Iterations = C / CONV_TS = 4096 / 64 
+
+__global__ void conv1d_kernel(
+  float *in, float *w, float *b, float *out,
+  int n, int C, int s, int OC, int K, int os) {
+
+  __shared__ float inTile[CONV_TS * s];
+  __shared__ float wTile[CONV_TS * K];
+
+  float outReg[os] = {0.0f};
+
+  int ocIdx = blockIdx.x;
+  int nIdx = blockIdx.y;
+
+  w += ocIdx * C * K;
+  in += nIdx * C * s;
+
+  // Tile Iteration
+  for(int t = 0; t < C; t += CONV_TS) {
+
+    // Copy from GMEM to SMEM
+    // threadIdx.x <= K - 1  && threadIdx.y <= CONV_TS - 1
+    int wIdx = threadIdx.y * K + threadIdx.x;
+    wTile[wIdx] = w[wIdx];
+    for(int i = wIdx; i < CONV_TS * s; i += CONV_TS * K) {
+      inTile[i] = in[i];
+    }
+
+    __syncthreads();
+
+    float wVal = wTile[threadIdx.y * K + threadIdx.x];
+    for(int i = 0; i < os; i++) {
+      outReg[i] += inTile[threadIdx.y * s + (threadIdx.x + i)] * wVal;
+    }
+
+    // Transfer Tile
+    w += CONV_TS * K;
+    in += CONV_TS * s;
+
+    __syncthreads();
+  }
+
+  for(int i = 0; i < os; i++) {
+    out[nIdx * OC * os + ocIdx * os + i] = outReg[i] + b[ocIdx];
+  }
+}
+
 /* Conv1D 
- * @param [in1]  in: [C, s]
+ * @param [in1]  in: [n, C, s]
  * @param [in2]   w: [OC, C, K] 
  * @param [in3]   b: [OC]
- * @param [out] out: [OC, os]
+ * @param [out] out: [n, OC, os]
  *    
  *    In this model, K is 3, 5, 7, or 9, 
  *    with stride = 1, pad = 0, dilation = 1.
@@ -72,32 +121,26 @@ void Permute(Tensor *in, Tensor *out) {
  *          = (s - K + 2 * 0) / 1 + 1
  *          = s - K + 1
  *
- * 'C' is the input channel size
- * 's' is the input sequence length
- * 'OC' is the output channel size
- * 'os' is the output sequence length
- * 'K' is the kernel (or filter) size
+ * 'n' is the number of samples (4096)
+ * 'C' is the input channel size (4096)
+ * 's' is the input sequence length (16)
+ * 'OC' is the output channel size (1024)
+ * 'os' is the output sequence length (14 or 12 or 10 or 8)
+ * 'K' is the kernel (or filter) size (3 or 5 or 7 or 9)
  */
 void Conv1D(Tensor *in, Tensor *w, Tensor *b, Tensor *out) {
-  size_t s = in->shape[1];
-  size_t C = in->shape[0];
+  size_t n = in->shape[0];
+  size_t C = in->shape[1];
+  size_t s = in->shape[2];
   size_t OC = w->shape[0];
   size_t K = w->shape[2];
-  
   size_t os = s - K + 1;
 
-  for (size_t i = 0; i < OC; i++) {
-    for (size_t j = 0; j < os; j++) {
-      float val = 0.f;
-      for (size_t k = 0; k < C; k++) {
-        for (size_t l = 0; l < K; l++) {
-          val += in->buf[k * s + j + l] * 
-                  w->buf[i * C * K + k * K + l];
-        }
-      }
-      out->buf[i * os + j] = val + b->buf[i];
-    }
-  }
+  dim3 blockDim(K, CONV_TS, 1); // CONV_TS * K
+  dim3 gridDim(OC, n, 1); // n * OC
+
+  conv1d_kernel<<<gridDim, blockDim>>>(in->buf, w->buf, b->buf, out->buf, n, C, s, OC, K, os);
+  CHECK_CUDA(cudaDeviceSynchronize());
 }
 
 /* ReLU
