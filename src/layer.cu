@@ -1,10 +1,6 @@
 #include "layer.h"
 
-/*
-  One input element (4096 output elements) per thread
-  2D thread block size = EMB_SENTENCES * 16
-  Total number of threads = n * 16
-*/
+// Embedding Kernel
 
 #define EMB_BLOCKDIM 256
 
@@ -33,6 +29,7 @@ void Embedding(int *in, Tensor* w, Tensor *out) {
   CHECK_CUDA(cudaDeviceSynchronize());
 }
 
+// Permute Kernel
 
 #define PERM_BLOCKDIM 256
 
@@ -59,6 +56,8 @@ void Permute(Tensor *in, Tensor *out) {
   CHECK_CUDA(cudaDeviceSynchronize());
 }
 
+
+// Conv1D Kernel
 
 #define CONV_TS 64
 // Number of Tile Iterations = C / CONV_TS = 4096 / 64 
@@ -143,6 +142,14 @@ void Conv1D(Tensor *in, Tensor *w, Tensor *b, Tensor *out) {
   CHECK_CUDA(cudaDeviceSynchronize());
 }
 
+
+__global__ void relu_kernel(float *inout, size_t N) {
+  size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < N) {
+    inout[i] = inout[i] > 0 ? inout[i] : 0;
+  }
+}
+
 /* ReLU
  * @param [in & out] inout: [N]
  * 'N' is the number of elements in the tensor.
@@ -150,32 +157,11 @@ void Conv1D(Tensor *in, Tensor *w, Tensor *b, Tensor *out) {
 void ReLU(Tensor *inout) {
   size_t N = inout->num_elem();
 
-  for (size_t i = 0; i < N; i++) {
-    inout->buf[i] = inout->buf[i] > 0 ? inout->buf[i] : 0;
-  }
-}
-/* ReLU CUDA kernel */
-__global__ void ReLU_Kernel(float *inout, size_t N) {
-  size_t i = blockIdx.x * blockDim.x + threadIdx.x;
-  if (i < N) {
-    inout[i] = inout[i] > 0 ? inout[i] : 0;
-  }
-}
-/* ReLU using CUDA */
-void ReLU_CUDA(Tensor *inout) {
-  size_t N = inout->num_elem();
+  dim3 blockDim(256, 1, 1);
+  dim3 gridDim(N/256, 1, 1);
 
-  float *d_inout;
-  CHECK_CUDA(cudaMalloc(&d_inout, N * sizeof(float)));
-  CHECK_CUDA(cudaMemcpy(d_inout, inout->buf, N * sizeof(float), 
-                        cudaMemcpyHostToDevice));
-
-  ReLU_Kernel<<<(N + 255) / 256, 256>>>(d_inout, N);
+  relu_kernel<<<gridDim, blockDim>>>(inout->buf, N);
   CHECK_CUDA(cudaDeviceSynchronize());
-
-  CHECK_CUDA(cudaMemcpy(inout->buf, d_inout, N * sizeof(float), 
-                        cudaMemcpyDeviceToHost));
-  CHECK_CUDA(cudaFree(d_inout));
 }
 
 /* GetMax

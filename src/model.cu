@@ -187,22 +187,18 @@ void predict_sentiment(int *inputs, float *outputs, size_t n_samples) {
 
       Conv1D(permute_a[g], conv0_w[g], conv0_b[g], conv0_a[g]);
       ReLU(conv0_a[g]);
-
       GetMax(conv0_a[g], pool0_a[g]);
 
       Conv1D(permute_a[g], conv1_w[g], conv1_b[g], conv1_a[g]);
       ReLU(conv1_a[g]);
-
       GetMax(conv1_a[g], pool1_a[g]);
 
       Conv1D(permute_a[g], conv2_w[g], conv2_b[g], conv2_a[g]);
       ReLU(conv2_a[g]);
-
       GetMax(conv2_a[g], pool2_a[g]);
 
       Conv1D(permute_a[g], conv3_w[g], conv3_b[g], conv3_a[g]);
       ReLU(conv3_a[g]);
-
       GetMax(conv3_a[g], pool3_a[g]);
 
       Concat(pool0_a[g], pool1_a[g], pool2_a[g], pool3_a[g], concat_a[g]);
