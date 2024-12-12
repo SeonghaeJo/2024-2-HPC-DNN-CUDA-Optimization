@@ -143,6 +143,8 @@ void Conv1D(Tensor *in, Tensor *w, Tensor *b, Tensor *out) {
 }
 
 
+// ReLU Kernel
+
 __global__ void relu_kernel(float *inout, size_t N) {
   size_t i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i < N) {
@@ -163,6 +165,9 @@ void ReLU(Tensor *inout) {
   relu_kernel<<<gridDim, blockDim>>>(inout->buf, N);
   CHECK_CUDA(cudaDeviceSynchronize());
 }
+
+
+// GetMax Kernel
 
 #define GETMAX_BLOCKDIM 128
 
@@ -199,6 +204,28 @@ void GetMax(Tensor *in, Tensor *out) {
   CHECK_CUDA(cudaDeviceSynchronize());
 }
 
+
+// Concat Kernel
+
+#define CONCAT_BLOCKDIM 128
+
+__global__ void concat_kernel(
+  float *in1, float *in2, float *in3, float *in4, float *out, int C) {
+  
+  int tid = blockIdx.x * blockDim.x + threadIdx.x;
+
+  out += blockIdx.y * (4 * C);
+  in1 += blockIdx.y * C;
+  in2 += blockIdx.y * C;
+  in3 += blockIdx.y * C;
+  in4 += blockIdx.y * C;
+
+  out[tid] = in1[tid];
+  out[tid + C] = in2[tid];
+  out[tid + 2 * C] = in3[tid];
+  out[tid + 3 * C] = in4[tid];
+}
+
 /* Concat
  * @param [in1] in1: [N1]
  * @param [in2] in2: [N2]
@@ -209,23 +236,32 @@ void GetMax(Tensor *in, Tensor *out) {
  */
 void Concat(Tensor *in1, Tensor *in2, Tensor *in3, Tensor *in4, 
             Tensor *out) {
-  size_t N1 = in1->shape[0];
-  size_t N2 = in2->shape[0];
-  size_t N3 = in3->shape[0];
-  size_t N4 = in4->shape[0];
+  // size_t N1 = in1->shape[0];
+  // size_t N2 = in2->shape[0];
+  // size_t N3 = in3->shape[0];
+  // size_t N4 = in4->shape[0];
 
-  for (size_t i = 0; i < N1; i++) {
-    out->buf[i] = in1->buf[i];
-  }
-  for (size_t i = 0; i < N2; i++) {
-    out->buf[N1 + i] = in2->buf[i];
-  }
-  for (size_t i = 0; i < N3; i++) {
-    out->buf[N1 + N2 + i] = in3->buf[i];
-  }
-  for (size_t i = 0; i < N4; i++) {
-    out->buf[N1 + N2 + N3 + i] = in4->buf[i];
-  }
+  // for (size_t i = 0; i < N1; i++) {
+  //   out->buf[i] = in1->buf[i];
+  // }
+  // for (size_t i = 0; i < N2; i++) {
+  //   out->buf[N1 + i] = in2->buf[i];
+  // }
+  // for (size_t i = 0; i < N3; i++) {
+  //   out->buf[N1 + N2 + i] = in3->buf[i];
+  // }
+  // for (size_t i = 0; i < N4; i++) {
+  //   out->buf[N1 + N2 + N3 + i] = in4->buf[i];
+  // }
+
+  size_t n = in1->shape[0];
+  size_t C = in1->shape[1];
+
+  dim3 blockDim(CONCAT_BLOCKDIM, 1, 1);
+  dim3 gridDim(C / CONCAT_BLOCKDIM, n, 1);
+
+  concat_kernel<<<gridDim, blockDim>>>(in1->buf, in2->buf, in3->buf, in4->buf, out->buf, C);
+  CHECK_CUDA(cudaDeviceSynchronize());
 }
 
 /* Linear 
