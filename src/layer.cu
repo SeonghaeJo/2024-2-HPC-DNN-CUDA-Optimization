@@ -164,27 +164,39 @@ void ReLU(Tensor *inout) {
   CHECK_CUDA(cudaDeviceSynchronize());
 }
 
+#define GETMAX_BLOCKDIM 128
+
+__global__ void getmax_kernel(float *in, float *out, int C, int s) {
+  int tid = blockIdx.x * blockDim.x + threadIdx.x;
+  float result = -1.0f; // Tensor elements >= 0 after ReLU
+  in += blockIdx.y * C * s + tid * s;
+  for (int i = 0; i < s; i++) {
+    result = fmaxf(result, in[i]);
+  }
+  out[blockIdx.y * C + tid] = result;
+}
+
 /* GetMax
- * @param [in]   in: [C, s]
- * @param [out] out: [C]
+ * @param [in]   in: [n, C, s]
+ * @param [out] out: [n, C]
  *    
  *    This layer is to get the max value along the sequence dim.
  *    The formula for this layer: out = max(in, dim=-1)
  * 
+ * 'n' is the number of sentences
  * 'C' is the channel size
  * 's' is the sequence length
  */
 void GetMax(Tensor *in, Tensor *out) {
-  size_t C = in->shape[0];
-  size_t s = in->shape[1];
+  size_t n = in->shape[0];
+  size_t C = in->shape[1];
+  size_t s = in->shape[2];
 
-  for (size_t i = 0; i < C; i++) {
-    out->buf[i] = in->buf[i * s];
-    for (size_t j = 1; j < s; j++) {
-      out->buf[i] = in->buf[i * s + j] > out->buf[i] ? 
-        in->buf[i * s + j] : out->buf[i];
-    }
-  }
+  dim3 blockDim(GETMAX_BLOCKDIM, 1, 1);
+  dim3 gridDim(C / GETMAX_BLOCKDIM, n, 1);
+
+  getmax_kernel<<<gridDim, blockDim>>>(in->buf, out->buf, C, s);
+  CHECK_CUDA(cudaDeviceSynchronize());
 }
 
 /* Concat
