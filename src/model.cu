@@ -177,7 +177,7 @@ void predict_sentiment(int *inputs, float *outputs, size_t n_samples) {
     for (int g = 0; g < NUM_GPUS; g++) {
 
       // inputs = [num_sentences * SEQ_LEN]
-      CHECK_CUDA(cudaMemcpy(inputs_d[g], inputs, 
+      CHECK_CUDA(cudaMemcpy(inputs_d[g], &inputs[(NUM_SENTENCES / NUM_GPUS) * SEQ_LEN * g], 
                             NUM_SENTENCES / NUM_GPUS * SEQ_LEN * sizeof(int), 
                             cudaMemcpyHostToDevice));
 
@@ -212,10 +212,10 @@ void predict_sentiment(int *inputs, float *outputs, size_t n_samples) {
       Linear(linear1_a[g], linear2_w[g], linear2_b[g], linear2_a[g]);
       ReLU(linear2_a[g]);
 
-      Linear(linear2_a[g], linear3_w[g], linear3_b[g], linear3_a[g]);
+      Linear_narrow(linear2_a[g], linear3_w[g], linear3_b[g], linear3_a[g]);
 
       // outputs = [num_sentences * N_CLASSES]
-      CHECK_CUDA(cudaMemcpy(outputs, linear3_a[g],
+      CHECK_CUDA(cudaMemcpy(&outputs[(NUM_SENTENCES / NUM_GPUS) * 2 * g], linear3_a[g],
                             NUM_SENTENCES / NUM_GPUS * 2 * sizeof(float),
                             cudaMemcpyDeviceToHost));
     }

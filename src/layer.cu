@@ -285,7 +285,6 @@ __global__ void linear_kernel(float *A, float *B, float *C, float *bias, int M, 
   A += blockIdx.y * TS * K;
   B += blockIdx.x * TS * K;
 
-  float bias_regs[TSK];
   float sums[W][W] = {0.0f};
 
   for(int t = 0; t < K; t += TSK) {
@@ -355,10 +354,53 @@ void Linear(Tensor *in, Tensor *w, Tensor *b, Tensor *out) {
 
 // Linear Kernel for last layer (N = 2)
 
+#define NTS 64
+#define NTSK 16
+
 void linear_narrow_kernel(float *A, float *B, float *C, float *bias, int M, int N,
                               int K) {
   
+  // N = 2
+  // C [M * N]
+  // A [M * K]
+  // B [N * K]
+  // bias [N]                        
+  
+  __shared__ float As[NTS * NTSK];
+  __shared__ float Bs[N * K];
 
+  int tid = threadIdx.y * N + threadIdx.x;
+  int globalRow = blockIdx.x * NTS;
+
+  // Copy from the entire B to Bs (GMEM -> SMEM)
+  for(int i = tid; i < N * K; i += N * NTS) {
+    Bs[i] = B[i];
+  }
+
+  A += globalRow * K;
+
+  float sum = 0.0f;
+
+  for(int t = 0; t < K; t += NTSK) {
+
+    for(int i = tid; i < NTS * NTSK; i += N * NTS) {
+      int r = i / NTSK;
+      int c = i % NTSK;
+      As[i] = A[r * K + c];
+    }
+
+    __syncthreads();
+
+    for(int k = 0; k < NTSK; k++) {
+      sum += As[threadIdx.y * N + k] * Bs[threadIdx.x * K + (t + k)];
+    }
+    
+    A += NTSK;
+
+    __syncthreads();
+  }
+
+  C[globalRow * N + threadIdx.x] = sum;
 }
 
 void Linear_narrow(Tensor *in, Tensor *w, Tensor *b, Tensor *out) {
@@ -366,5 +408,9 @@ void Linear_narrow(Tensor *in, Tensor *w, Tensor *b, Tensor *out) {
   size_t K = in->shape[1];
   size_t N = w->shape[0]; // 2 (Narrow N)
 
+  dim3 blockDim(N, NTS, 1);
+  dim3 gridDim(M/NTS, 1, 1);
 
+  linear_narrow_kernel<<<gridDim, blockDim>>>(in->buf, w->buf, out->buf, b->buf, M, N, K);
+  CHECK_CUDA(cudaDeviceSynchronize());
 }
