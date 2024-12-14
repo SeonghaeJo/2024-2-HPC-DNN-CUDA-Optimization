@@ -264,6 +264,75 @@ void Concat(Tensor *in1, Tensor *in2, Tensor *in3, Tensor *in4,
   CHECK_CUDA(cudaDeviceSynchronize());
 }
 
+
+// Linear Kernel (except for last layer)
+
+#define TS 128
+#define TSK 4
+#define W 8
+#define VEC 4
+
+__global__ void linear_kernel(float *A, float *B, float *C, float *bias, int M, int N,
+                              int K) {
+  // C [M * N]
+  // A [M * K]
+  // B [N * K]
+  // bias [N]                        
+  
+  __shared__ __align__(16) float As[TS * TSK];
+  __shared__ __align__(16) float Bs[TS * TSK];
+
+  A += blockIdx.y * TS * K;
+  B += blockIdx.x * TS * K;
+
+  float bias_regs[TSK];
+  float sums[W][W] = {0.0f};
+
+  for(int t = 0; t < K; t += TSK) {
+
+    if (threadIdx.y < 8) { // threadIdx.y range = [0, 7]
+      int r = threadIdx.y * 16 + threadIdx.x;
+      reinterpret_cast<float4 *>(&As[r * TSK])[0] = reinterpret_cast<float4 *>(&A[r * K])[0];
+    }
+    else { // threadIdx.y range = [8, 15]
+      int r = (threadIdx.y - 8) * 16 + threadIdx.x;
+      reinterpret_cast<float4 *>(&Bs[r * TS])[0] = reinterpret_cast<float4 *>(&B[r * K])[0];
+    }
+
+    __syncthreads();
+    
+    for(int w1 = 0; w1 < W; w1++) {
+      int r1 = threadIdx.y + w1 * (TS/W);
+      #pragma unroll
+      for(int w2 = 0; w2 < W; w2++) {
+        int r2 = threadIdx.x + w2 * (TS/W);
+        float temp = 0.0f;
+
+        #pragma unroll
+        for(int k = 0; k < TSK; k++) {
+          temp += As[r1 * TSK + k] * Bs[r2 * TSK + k];
+        }
+
+        sums[w1][w2] += temp;
+      }
+    }
+
+    A += TSK;
+    B += TSK;
+
+    __syncthreads();
+  }
+
+  int globalCol = blockIdx.x * TS + threadIdx.x;
+  int globalRow = blockIdx.y * TS + threadIdx.y;
+
+  for(int w1 = 0; w1 < W; w1++) {
+    for(int w2 = 0; w2 < W; w2++) {
+      C[(globalRow + w1 * (TS/W)) * N + (globalCol + w2 * (TS/W))] = sums[w1][w2] + bias[globalCol + w2 * (TS/W)];
+    }
+  }
+}
+
 /* Linear 
  * @param [in1]  in: [N]
  * @param [in2]   w: [M, N]
@@ -273,16 +342,29 @@ void Concat(Tensor *in1, Tensor *in2, Tensor *in3, Tensor *in4,
  * 'M' is the output feature size
  */
 void Linear(Tensor *in, Tensor *w, Tensor *b, Tensor *out) {
-  size_t N = in->shape[0];
-  size_t M = w->shape[0];
+  size_t M = in->shape[0];
+  size_t K = in->shape[1];
+  size_t N = w->shape[0];
 
-  for (size_t i = 0; i < M; i++) {
-    float val = 0.f;
-    for (size_t j = 0; j < N; j++) {
-      val += in->buf[j] * w->buf[i * N + j];
-    }
-    out->buf[i] = val + b->buf[i];
-  }
+  dim3 blockDim(TS/W, TS/W, 1);
+  dim3 gridDim(N/TS, M/TS, 1);
+
+  linear_kernel<<<gridDim, blockDim>>>(in->buf, w->buf, out->buf, b->buf, M, N, K);
+  CHECK_CUDA(cudaDeviceSynchronize());
 }
 
+// Linear Kernel for last layer (N = 2)
 
+void linear_narrow_kernel(float *A, float *B, float *C, float *bias, int M, int N,
+                              int K) {
+  
+
+}
+
+void Linear_narrow(Tensor *in, Tensor *w, Tensor *b, Tensor *out) {
+  size_t M = in->shape[0];
+  size_t K = in->shape[1];
+  size_t N = w->shape[0]; // 2 (Narrow N)
+
+
+}
