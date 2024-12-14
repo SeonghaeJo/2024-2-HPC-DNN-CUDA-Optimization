@@ -25,7 +25,7 @@ Parameter *linear3_w[NUM_GPUS], *linear3_b[NUM_GPUS];
 void alloc_and_set_parameters(float *param, size_t param_size) {
   size_t pos[4] = {0};
 
-  #pragma omp parallel for num_thread(NUM_GPUS)
+  #pragma omp parallel for num_threads(NUM_GPUS)
   for (int g = 0; g < NUM_GPUS; g++) {
     CHECK_CUDA(cudaSetDevice(g));
 
@@ -117,7 +117,7 @@ Activation *linear0_a[NUM_GPUS], *linear1_a[NUM_GPUS], *linear2_a[NUM_GPUS], *li
 int *inputs_d[NUM_GPUS];
 
 void alloc_activations() {
-  #pragma omp parallel for num_thread(NUM_GPUS)
+  #pragma omp parallel for num_threads(NUM_GPUS)
   for (int g = 0; g < NUM_GPUS; g++) {
     emb_a[g] = new Activation({NUM_SENTENCES / NUM_GPUS, SEQ_LEN, 4096});
     permute_a[g] = new Activation({NUM_SENTENCES / NUM_GPUS, 4096, SEQ_LEN});

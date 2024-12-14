@@ -1,5 +1,8 @@
 #include "layer.h"
 
+#define SEQ_LEN 16
+#define N_CLASSES 2
+
 // Embedding Kernel
 
 #define EMB_BLOCKDIM 256
@@ -61,15 +64,16 @@ void Permute(Tensor *in, Tensor *out) {
 
 #define CONV_TS 64
 // Number of Tile Iterations = C / CONV_TS = 4096 / 64 
+#define MAX_OS 14
 
 __global__ void conv1d_kernel(
   float *in, float *w, float *b, float *out,
   int n, int C, int s, int OC, int K, int os) {
 
-  __shared__ float inTile[CONV_TS * s];
-  __shared__ float wTile[CONV_TS * K];
+  __shared__ float inTile[CONV_TS * SEQ_LEN];
+  extern __shared__ float wTile[];
 
-  float outReg[os] = {0.0f};
+  float outReg[MAX_OS] = {0.0f};
 
   int ocIdx = blockIdx.x;
   int nIdx = blockIdx.y;
@@ -138,7 +142,7 @@ void Conv1D(Tensor *in, Tensor *w, Tensor *b, Tensor *out) {
   dim3 blockDim(K, CONV_TS, 1); // CONV_TS * K
   dim3 gridDim(OC, n, 1); // n * OC
 
-  conv1d_kernel<<<gridDim, blockDim>>>(in->buf, w->buf, b->buf, out->buf, n, C, s, OC, K, os);
+  conv1d_kernel<<<gridDim, blockDim, CONV_TS * K * sizeof(float)>>>(in->buf, w->buf, b->buf, out->buf, n, C, s, OC, K, os);
   CHECK_CUDA(cudaDeviceSynchronize());
 }
 
@@ -357,17 +361,17 @@ void Linear(Tensor *in, Tensor *w, Tensor *b, Tensor *out) {
 #define NTS 64
 #define NTSK 16
 
-void linear_narrow_kernel(float *A, float *B, float *C, float *bias, int M, int N,
+__global__ void linear_narrow_kernel(float *A, float *B, float *C, float *bias, int M, int N,
                               int K) {
   
-  // N = 2
+  // N = 2, K = 512
   // C [M * N]
   // A [M * K]
   // B [N * K]
   // bias [N]                        
   
   __shared__ float As[NTS * NTSK];
-  __shared__ float Bs[N * K];
+  __shared__ float Bs[1024]; // N * K = 2 * 512
 
   int tid = threadIdx.y * N + threadIdx.x;
   int globalRow = blockIdx.x * NTS;
