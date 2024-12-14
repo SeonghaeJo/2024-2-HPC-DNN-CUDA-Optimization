@@ -1,5 +1,7 @@
 #include "layer.h"
 
+#define DEBUG 1
+
 #define SEQ_LEN 16
 #define N_CLASSES 2
 
@@ -28,6 +30,7 @@ void Embedding(int *in, Tensor* w, Tensor *out) {
 
   dim3 blockDim(EMB_BLOCKDIM, 1, 1);
   dim3 gridDim(H / EMB_BLOCKDIM, s, n);
+
   embedding_kernel<<<gridDim, blockDim>>>(in, w->buf, out->buf, n, s, H);
   CHECK_CUDA(cudaDeviceSynchronize());
 }

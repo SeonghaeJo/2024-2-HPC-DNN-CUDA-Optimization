@@ -22,7 +22,6 @@ Tensor::Tensor(const vector<size_t> &shape_, float *buf_) {
   size_t N_ = num_elem();
   CHECK_CUDA(cudaMalloc(&buf, N_ * sizeof(float)));
   CHECK_CUDA(cudaMemcpy(buf, buf_, N_ * sizeof(float), cudaMemcpyHostToDevice));
-  memcpy(buf, buf_, N_ * sizeof(float));
 }
 
 Tensor::~Tensor() {

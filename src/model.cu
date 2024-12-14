@@ -6,6 +6,8 @@
 #include "layer.h"
 #include "model.h"
 
+#define DEBUG 1
+
 #define NUM_GPUS 4
 
 /* [Model Parameters]
@@ -25,8 +27,16 @@ Parameter *linear3_w[NUM_GPUS], *linear3_b[NUM_GPUS];
 void alloc_and_set_parameters(float *param, size_t param_size) {
   size_t pos[4] = {0};
 
+  int mpi_rank;
+  MPI_Comm_rank(MPI_COMM_WORLD, &mpi_rank);
+
+  #ifdef DEBUG
+  if (mpi_rank == 0) printf("alloc_and_set_parameters\n");
+  #endif
+
   #pragma omp parallel for num_threads(NUM_GPUS)
   for (int g = 0; g < NUM_GPUS; g++) {
+
     CHECK_CUDA(cudaSetDevice(g));
 
     emb_w[g] = new Parameter({21635, 4096}, param + pos[g]);
@@ -165,7 +175,7 @@ void free_activations() {
 void predict_sentiment(int *inputs, float *outputs, size_t n_samples) {
 
   if (n_samples != NUM_SENTENCES) {
-    printf("predict_sentiment : n_samples is not equal to NUM_SENTENCES");
+    printf("predict_sentiment : n_sample (%lu) is not equal to NUM_SENTENCES (%d)\n", n_samples, NUM_SENTENCES);
     exit(1);
   }
 
