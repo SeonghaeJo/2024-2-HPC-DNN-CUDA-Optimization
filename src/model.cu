@@ -336,13 +336,13 @@ void predict_sentiment(int *inputs, float *outputs, size_t n_samples) {
         printf("[Linear 0] N0 = %lu, M0 = %lu\n", N0, M0);
 
         float *concat_a_debug = (float *)malloc(4096 * sizeof(float));
-        CHECK_CUDA(cudaMemcpy(concat_a_debug, concat_a[g]->buf, 4096 * sizeof(float), cudaMemcpyDeviceToHost));
+        CHECK_CUDA(cudaMemcpy(concat_a_debug, concat_a[g]->buf + 4096, 4096 * sizeof(float), cudaMemcpyDeviceToHost));
         float *linear0_w_debug = (float *)malloc(2048 * 4096 * sizeof(float));
         CHECK_CUDA(cudaMemcpy(linear0_w_debug, linear0_w[g]->buf, 2048 * 4096 * sizeof(float), cudaMemcpyDeviceToHost));
         float *linear0_b_debug = (float *)malloc(2048 * sizeof(float));
         CHECK_CUDA(cudaMemcpy(linear0_b_debug, linear0_b[g]->buf, 2048 * sizeof(float), cudaMemcpyDeviceToHost));
         float *linear0_a_debug = (float *)malloc(2048 * sizeof(float));
-        CHECK_CUDA(cudaMemcpy(linear0_a_debug, linear0_a[g]->buf, 2048 * sizeof(float), cudaMemcpyDeviceToHost));
+        CHECK_CUDA(cudaMemcpy(linear0_a_debug, linear0_a[g]->buf + 2048, 2048 * sizeof(float), cudaMemcpyDeviceToHost));
         float *linear0_a_ans = (float *)malloc(2048 * sizeof(float));
 
         for (size_t i = 0; i < M0; i++) {
@@ -381,13 +381,13 @@ void predict_sentiment(int *inputs, float *outputs, size_t n_samples) {
         printf("[Linear narrow] N3 = %lu, M3 = %lu\n", N3, M3);
 
         float *linear2_a_debug = (float *)malloc(512 * sizeof(float));
-        CHECK_CUDA(cudaMemcpy(linear2_a_debug, linear2_a[g]->buf, 512 * sizeof(float), cudaMemcpyDeviceToHost));
+        CHECK_CUDA(cudaMemcpy(linear2_a_debug, linear2_a[g]->buf + 512, 512 * sizeof(float), cudaMemcpyDeviceToHost));
         float *linear3_w_debug = (float *)malloc(2 * 512 * sizeof(float));
         CHECK_CUDA(cudaMemcpy(linear3_w_debug, linear3_w[g]->buf, 2 * 512 * sizeof(float), cudaMemcpyDeviceToHost));
         float *linear3_b_debug = (float *)malloc(2 * sizeof(float));
         CHECK_CUDA(cudaMemcpy(linear3_b_debug, linear3_b[g]->buf, 2 * sizeof(float), cudaMemcpyDeviceToHost));
         float *linear3_a_debug = (float *)malloc(2 * sizeof(float));
-        CHECK_CUDA(cudaMemcpy(linear3_a_debug, linear3_a[g]->buf, 2 * sizeof(float), cudaMemcpyDeviceToHost));
+        CHECK_CUDA(cudaMemcpy(linear3_a_debug, linear3_a[g]->buf + 2, 2 * sizeof(float), cudaMemcpyDeviceToHost));
         float *linear3_a_ans = (float *)malloc(2 * sizeof(float));
 
         for (size_t i = 0; i < M3; i++) {

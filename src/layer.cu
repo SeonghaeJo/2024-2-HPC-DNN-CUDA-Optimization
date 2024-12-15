@@ -385,7 +385,7 @@ __global__ void linear_narrow_kernel(float *A, float *B, float *C, float *bias, 
     __syncthreads();
 
     for(int k = 0; k < NTSK; k++) {
-      sum += As[threadIdx.y * N + k] * Bs[threadIdx.x * K + (t + k)];
+      sum += As[threadIdx.y * NTSK + k] * Bs[threadIdx.x * K + (t + k)];
     }
     
     A += NTSK;
