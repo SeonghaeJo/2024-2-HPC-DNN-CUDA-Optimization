@@ -121,7 +121,7 @@ void *read_binary(const char *fname, size_t *size) {
 
   void *buf;
   CHECK_CUDA(cudaMallocHost(&buf, size_));
-  buf = malloc(size_);
+  // buf = malloc(size_);
   size_t ret = fread(buf, 1, size_, f);
   if (ret == 0) {
     fprintf(stdout, "[ERROR] Cannot read file \'%s\'\n", fname);

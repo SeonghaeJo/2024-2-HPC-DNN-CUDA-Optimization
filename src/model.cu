@@ -6,7 +6,7 @@
 #include "layer.h"
 #include "model.h"
 
-#define DEBUG 1
+// #define DEBUG 1
 
 #define NUM_GPUS 4
 
@@ -181,7 +181,7 @@ void free_activations() {
 /* [Model Computation: Sentiment Analysis Task] */
 void predict_sentiment(int *inputs, float *outputs, size_t n_samples) {
 
-  if (n_samples != NUM_SENTENCES) {
+  if (n_samples != 1 && n_samples != NUM_SENTENCES) {
     printf("predict_sentiment : n_sample (%lu) is not equal to NUM_SENTENCES (%d)\n", n_samples, NUM_SENTENCES);
     exit(1);
   }
@@ -190,7 +190,7 @@ void predict_sentiment(int *inputs, float *outputs, size_t n_samples) {
   MPI_Comm_rank(MPI_COMM_WORLD, &mpi_rank);
   if (mpi_rank == 0) {
 
-    // #pragma omp parallel for num_threads(NUM_GPUS)
+    #pragma omp parallel for num_threads(NUM_GPUS)
     for (int g = 0; g < NUM_GPUS; g++) {
 
       CHECK_CUDA(cudaSetDevice(g));
@@ -258,6 +258,10 @@ void predict_sentiment(int *inputs, float *outputs, size_t n_samples) {
         free(perm_a_debug);
       }
       #endif
+
+      if (n_samples == 1) {
+        continue;
+      }
 
       Conv1D(permute_a[g], conv0_w[g], conv0_b[g], conv0_a[g]);
 
