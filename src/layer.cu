@@ -187,7 +187,7 @@ void ReLU(Tensor *inout) {
 
 __global__ void getmax_kernel(float *in, float *out, int C, int s) {
   int tid = blockIdx.x * blockDim.x + threadIdx.x;
-  float result = -1.0f; // Tensor elements >= 0 after ReLU
+  float result = 0.0f; // Tensor elements >= 0 after ReLU
   in += blockIdx.y * C * s + tid * s;
   for (int i = 0; i < s; i++) {
     result = fmaxf(result, in[i]);
@@ -291,7 +291,7 @@ __global__ void linear_kernel(float *A, float *B, float *C, float *bias, int M, 
     }
     else { // threadIdx.y range = [8, 15]
       int r = (threadIdx.y - 8) * 16 + threadIdx.x;
-      reinterpret_cast<float4 *>(&Bs[r * TS])[0] = reinterpret_cast<float4 *>(&B[r * K])[0];
+      reinterpret_cast<float4 *>(&Bs[r * TSK])[0] = reinterpret_cast<float4 *>(&B[r * K])[0];
     }
 
     __syncthreads();
@@ -329,12 +329,10 @@ __global__ void linear_kernel(float *A, float *B, float *C, float *bias, int M, 
 }
 
 /* Linear 
- * @param [in1]  in: [N]
- * @param [in2]   w: [M, N]
- * @param [in3]   b: [M]
- * @param [out] out: [M]
- * 'N' is the input feature size
- * 'M' is the output feature size
+ * @param [in1]  in: [M, K] // M = NUM_SENTENCES / NUM_GPUS
+ * @param [in2]   w: [N, K]
+ * @param [in3]   b: [N]
+ * @param [out] out: [M, N]
  */
 void Linear(Tensor *in, Tensor *w, Tensor *b, Tensor *out) {
   size_t M = in->shape[0];
@@ -366,14 +364,13 @@ __global__ void linear_narrow_kernel(float *A, float *B, float *C, float *bias, 
   __shared__ float Bs[1024]; // N * K = 2 * 512
 
   int tid = threadIdx.y * N + threadIdx.x;
-  int globalRow = blockIdx.x * NTS;
 
   // Copy from the entire B to Bs (GMEM -> SMEM)
   for(int i = tid; i < N * K; i += N * NTS) {
     Bs[i] = B[i];
   }
 
-  A += globalRow * K;
+  A += blockIdx.x * NTS * K;
 
   float sum = 0.0f;
 
@@ -396,7 +393,8 @@ __global__ void linear_narrow_kernel(float *A, float *B, float *C, float *bias, 
     __syncthreads();
   }
 
-  C[globalRow * N + threadIdx.x] = sum;
+  int globalRow = blockIdx.x * NTS + threadIdx.y;
+  C[globalRow * N + threadIdx.x] = sum + bias[threadIdx.x];
 }
 
 void Linear_narrow(Tensor *in, Tensor *w, Tensor *b, Tensor *out) {

@@ -92,6 +92,8 @@ void alloc_and_set_parameters(float *param, size_t param_size) {
 
 void free_parameters() {
   for (int g = 0; g < NUM_GPUS; g++) {
+    CHECK_CUDA(cudaSetDevice(g));
+
     delete emb_w[g];
     delete conv0_w[g];
     delete conv0_b[g];
@@ -129,6 +131,8 @@ int *inputs_d[NUM_GPUS];
 void alloc_activations() {
   #pragma omp parallel for num_threads(NUM_GPUS)
   for (int g = 0; g < NUM_GPUS; g++) {
+    CHECK_CUDA(cudaSetDevice(g));
+
     emb_a[g] = new Activation({NUM_SENTENCES / NUM_GPUS, SEQ_LEN, 4096});
     permute_a[g] = new Activation({NUM_SENTENCES / NUM_GPUS, 4096, SEQ_LEN});
     conv0_a[g] = new Activation({NUM_SENTENCES / NUM_GPUS, 1024, SEQ_LEN - 2});
@@ -151,6 +155,9 @@ void alloc_activations() {
 
 void free_activations() {
   for (int g = 0; g < NUM_GPUS; g++) {
+
+    CHECK_CUDA(cudaSetDevice(g));
+
     delete emb_a[g];
     delete permute_a[g];
     delete conv0_a[g];
@@ -185,6 +192,8 @@ void predict_sentiment(int *inputs, float *outputs, size_t n_samples) {
 
     // #pragma omp parallel for num_threads(NUM_GPUS)
     for (int g = 0; g < NUM_GPUS; g++) {
+
+      CHECK_CUDA(cudaSetDevice(g));
 
       // inputs = [num_sentences * SEQ_LEN]
       CHECK_CUDA(cudaMemcpy(inputs_d[g], &inputs[(NUM_SENTENCES / NUM_GPUS) * SEQ_LEN * g], 
@@ -320,17 +329,38 @@ void predict_sentiment(int *inputs, float *outputs, size_t n_samples) {
       Concat(pool0_a[g], pool1_a[g], pool2_a[g], pool3_a[g], concat_a[g]);
 
       Linear(concat_a[g], linear0_w[g], linear0_b[g], linear0_a[g]);
-
       #ifdef DEBUG
-      size_t N = in->shape[0];
-      size_t M = w->shape[0];
+      if (g == 0) {
+        size_t N0 = concat_a[g]->shape[1]; // 4096
+        size_t M0 = linear0_w[g]->shape[0]; // 2048
+        printf("[Linear 0] N0 = %lu, M0 = %lu\n", N0, M0);
 
-      for (size_t i = 0; i < M; i++) {
-        float val = 0.f;
-        for (size_t j = 0; j < N; j++) {
-          val += in->buf[j] * w->buf[i * N + j];
+        float *concat_a_debug = (float *)malloc(4096 * sizeof(float));
+        CHECK_CUDA(cudaMemcpy(concat_a_debug, concat_a[g]->buf, 4096 * sizeof(float), cudaMemcpyDeviceToHost));
+        float *linear0_w_debug = (float *)malloc(2048 * 4096 * sizeof(float));
+        CHECK_CUDA(cudaMemcpy(linear0_w_debug, linear0_w[g]->buf, 2048 * 4096 * sizeof(float), cudaMemcpyDeviceToHost));
+        float *linear0_b_debug = (float *)malloc(2048 * sizeof(float));
+        CHECK_CUDA(cudaMemcpy(linear0_b_debug, linear0_b[g]->buf, 2048 * sizeof(float), cudaMemcpyDeviceToHost));
+        float *linear0_a_debug = (float *)malloc(2048 * sizeof(float));
+        CHECK_CUDA(cudaMemcpy(linear0_a_debug, linear0_a[g]->buf, 2048 * sizeof(float), cudaMemcpyDeviceToHost));
+        float *linear0_a_ans = (float *)malloc(2048 * sizeof(float));
+
+        for (size_t i = 0; i < M0; i++) {
+          float val = 0.f;
+          for (size_t j = 0; j < N0; j++) {
+            val += concat_a_debug[j] * linear0_w_debug[i * N0 + j];
+          }
+          linear0_a_ans[i] = val + linear0_b_debug[i];
+          if ((i < 3 || i > 2044)) {
+            printf("[i = %lu] ans = %f, cuda = %f\n", i, linear0_a_ans[i], linear0_a_debug[i]);
+          }
         }
-        out->buf[i] = val + b->buf[i];
+
+        free(concat_a_debug);
+        free(linear0_w_debug);
+        free(linear0_b_debug);
+        free(linear0_a_debug);
+        free(linear0_a_ans);
       }
       #endif
 
@@ -344,8 +374,41 @@ void predict_sentiment(int *inputs, float *outputs, size_t n_samples) {
 
       Linear_narrow(linear2_a[g], linear3_w[g], linear3_b[g], linear3_a[g]);
 
+      #ifdef DEBUG
+      if (g == 0) {
+        size_t N3 = linear2_a[g]->shape[1]; // 512
+        size_t M3 = linear3_w[g]->shape[0]; // 2
+        printf("[Linear narrow] N3 = %lu, M3 = %lu\n", N3, M3);
+
+        float *linear2_a_debug = (float *)malloc(512 * sizeof(float));
+        CHECK_CUDA(cudaMemcpy(linear2_a_debug, linear2_a[g]->buf, 512 * sizeof(float), cudaMemcpyDeviceToHost));
+        float *linear3_w_debug = (float *)malloc(2 * 512 * sizeof(float));
+        CHECK_CUDA(cudaMemcpy(linear3_w_debug, linear3_w[g]->buf, 2 * 512 * sizeof(float), cudaMemcpyDeviceToHost));
+        float *linear3_b_debug = (float *)malloc(2 * sizeof(float));
+        CHECK_CUDA(cudaMemcpy(linear3_b_debug, linear3_b[g]->buf, 2 * sizeof(float), cudaMemcpyDeviceToHost));
+        float *linear3_a_debug = (float *)malloc(2 * sizeof(float));
+        CHECK_CUDA(cudaMemcpy(linear3_a_debug, linear3_a[g]->buf, 2 * sizeof(float), cudaMemcpyDeviceToHost));
+        float *linear3_a_ans = (float *)malloc(2 * sizeof(float));
+
+        for (size_t i = 0; i < M3; i++) {
+          float val = 0.f;
+          for (size_t j = 0; j < N3; j++) {
+            val += linear2_a_debug[j] * linear3_w_debug[i * N3 + j];
+          }
+          linear3_a_ans[i] = val + linear3_b_debug[i];
+          printf("[i = %lu] ans = %f, cuda = %f\n", i, linear3_a_ans[i], linear3_a_debug[i]);
+        }
+
+        free(linear2_a_debug);
+        free(linear3_w_debug);
+        free(linear3_b_debug);
+        free(linear3_a_debug);
+        free(linear3_a_ans);
+      }
+      #endif
+
       // outputs = [num_sentences * N_CLASSES]
-      CHECK_CUDA(cudaMemcpy(&outputs[(NUM_SENTENCES / NUM_GPUS) * 2 * g], linear3_a[g],
+      CHECK_CUDA(cudaMemcpy(&outputs[(NUM_SENTENCES / NUM_GPUS) * 2 * g], linear3_a[g]->buf,
                             NUM_SENTENCES / NUM_GPUS * 2 * sizeof(float),
                             cudaMemcpyDeviceToHost));
     }
