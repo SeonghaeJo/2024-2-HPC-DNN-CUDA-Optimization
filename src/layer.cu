@@ -1,7 +1,5 @@
 #include "layer.h"
 
-#define DEBUG 1
-
 #define SEQ_LEN 16
 #define N_CLASSES 2
 
@@ -84,12 +82,13 @@ __global__ void conv1d_kernel(
   w += ocIdx * C * K;
   in += nIdx * C * s;
 
+  int wIdx = threadIdx.y * K + threadIdx.x;
+
   // Tile Iteration
   for(int t = 0; t < C; t += CONV_TS) {
 
     // Copy from GMEM to SMEM
     // threadIdx.x <= K - 1  && threadIdx.y <= CONV_TS - 1
-    int wIdx = threadIdx.y * K + threadIdx.x;
     wTile[wIdx] = w[wIdx];
     for(int i = wIdx; i < CONV_TS * s; i += CONV_TS * K) {
       inTile[i] = in[i];
@@ -97,7 +96,7 @@ __global__ void conv1d_kernel(
 
     __syncthreads();
 
-    float wVal = wTile[threadIdx.y * K + threadIdx.x];
+    float wVal = wTile[wIdx];
     for(int i = 0; i < os; i++) {
       outReg[i] += inTile[threadIdx.y * s + (threadIdx.x + i)] * wVal;
     }
@@ -110,7 +109,15 @@ __global__ void conv1d_kernel(
   }
 
   for(int i = 0; i < os; i++) {
-    out[nIdx * OC * os + ocIdx * os + i] = outReg[i] + b[ocIdx];
+    // out[nIdx * OC * os + ocIdx * os + i] += outReg[i];
+    atomicAdd(&out[nIdx * OC * os + ocIdx * os + i], outReg[i]);
+  }
+
+  if (threadIdx.y == 0 && threadIdx.x == 0) {
+    for (int i = 0; i < os; i++) {
+      // out[nIdx * OC * os + ocIdx * os + i] += b[ocIdx];
+      atomicAdd(&out[nIdx * OC * os + ocIdx * os + i], b[ocIdx]);
+    }
   }
 }
 
@@ -234,32 +241,14 @@ __global__ void concat_kernel(
 }
 
 /* Concat
- * @param [in1] in1: [N1]
- * @param [in2] in2: [N2]
- * @param [in3] in3: [N3]
- * @param [in4] in4: [N4]
- * @param [out] out: [N1 + N2 + N3 + N4]
- * 'N1', 'N2', 'N3', and 'N4' are the num of elems in the tensors.
+ * @param [in1] in1: [n, C]
+ * @param [in2] in2: [n, C]
+ * @param [in3] in3: [n, C]
+ * @param [in4] in4: [n, C]
+ * @param [out] out: [n, 4 * C]
  */
 void Concat(Tensor *in1, Tensor *in2, Tensor *in3, Tensor *in4, 
             Tensor *out) {
-  // size_t N1 = in1->shape[0];
-  // size_t N2 = in2->shape[0];
-  // size_t N3 = in3->shape[0];
-  // size_t N4 = in4->shape[0];
-
-  // for (size_t i = 0; i < N1; i++) {
-  //   out->buf[i] = in1->buf[i];
-  // }
-  // for (size_t i = 0; i < N2; i++) {
-  //   out->buf[N1 + i] = in2->buf[i];
-  // }
-  // for (size_t i = 0; i < N3; i++) {
-  //   out->buf[N1 + N2 + i] = in3->buf[i];
-  // }
-  // for (size_t i = 0; i < N4; i++) {
-  //   out->buf[N1 + N2 + N3 + i] = in4->buf[i];
-  // }
 
   size_t n = in1->shape[0];
   size_t C = in1->shape[1];

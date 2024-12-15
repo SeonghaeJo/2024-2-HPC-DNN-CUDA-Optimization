@@ -14,6 +14,7 @@ Tensor::Tensor(const vector<size_t> &shape_) {
   for (size_t i = 0; i < ndim; i++) { shape[i] = shape_[i]; }
   size_t N_ = num_elem();
   CHECK_CUDA(cudaMalloc(&buf, N_ * sizeof(float)));
+  CHECK_CUDA(cudaMemset(buf, 0.0f, N_ * sizeof(float)));
 }
 
 Tensor::Tensor(const vector<size_t> &shape_, float *buf_) {
