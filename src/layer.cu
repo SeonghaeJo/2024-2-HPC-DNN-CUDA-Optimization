@@ -94,6 +94,8 @@ __global__ void spread_input_kernel(
 #define WMMA_BLOCKDIM 512
 #define WARPS_PER_BLOCK (WMMA_BLOCKDIM / 32) // 16
 #define WMMA_BLOCK_ROWS (WMMA_M * WARPS_PER_BLOCK) // 256
+#define WMMA_TSKA 32
+#define WMMA_TSKB 512
 
 __global__ void matmul_wmma_kernel(
   const half *a, const half *b, float *c, const float *bias, int lm, int ln, int lk, int os
@@ -111,6 +113,9 @@ __global__ void matmul_wmma_kernel(
   // Move to the appropriate batch
   b += blockIdx.y * lk * ln;
 
+  __shared__ __align__(32) half a_shared[WMMA_BLOCK_ROWS * WMMA_TSKA];
+  __shared__ __align__(32) half b_shared[WMMA_TSKB * WMMA_N];
+
   wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K, half, wmma::row_major> a_frag;
   wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K, half, wmma::row_major> b_frag;
   wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, float> c_frag;
@@ -118,19 +123,43 @@ __global__ void matmul_wmma_kernel(
   wmma::fill_fragment(c_frag, 0.0f);
 
   int warpIdx = (blockIdx.x * blockDim.x + threadIdx.x) / 32;
-  int globalRow = warpIdx * WMMA_M;
 
-  for (int t = 0; t < lk; t += WMMA_K) {
-    wmma::load_matrix_sync(a_frag, a + globalRow * lk + t, lk);
-    wmma::load_matrix_sync(b_frag, b + t * WMMA_N, ln);
+  int localWarpIdx = threadIdx.x / 32;
 
-    wmma::mma_sync(c_frag, a_frag, b_frag, c_frag);
+  for (int bt = 0; bt < lk; bt += WMMA_TSKB) {
+    for (int i = threadIdx.x; i < WMMA_TSKB * WMMA_N; i += WMMA_BLOCKDIM) {
+      int bRow = i / WMMA_N;
+      int bCol = i % WMMA_N;
+      b_shared[i] = b[(bt + bRow) * ln + bCol];
+    }
+
+    for (int at = 0; at < WMMA_TSKB; at += WMMA_TSKA) {
+
+      for (int i = threadIdx.x; i < WMMA_BLOCK_ROWS * WMMA_TSKA; i += WMMA_BLOCKDIM) {
+        int aRow = i / WMMA_TSKA;
+        int aCol = i % WMMA_TSKA;
+        a_shared[i] = a[((warpIdx / WARPS_PER_BLOCK) * WMMA_BLOCK_ROWS + aRow) * lk + (bt + at) + aCol];
+      }
+
+      __syncthreads();
+
+      #pragma unroll
+      for (int wt = 0; wt < WMMA_TSKA; wt += WMMA_K) {
+        int t = bt + at + wt;
+
+        wmma::load_matrix_sync(a_frag, a_shared + (localWarpIdx * WMMA_M) * WMMA_TSKA + (t % WMMA_TSKA), WMMA_TSKA);
+        wmma::load_matrix_sync(b_frag, b_shared + (t % WMMA_TSKB) * WMMA_N, WMMA_N);
+
+        wmma::mma_sync(c_frag, a_frag, b_frag, c_frag);
+      }
+
+      __syncthreads();
+    }
   }
 
   // c_shared[0:os] = c, c_shared[os:] = zero padding
   __shared__ __align__(32) float c_shared[WMMA_BLOCK_ROWS * WMMA_N];
 
-  int localWarpIdx = threadIdx.x / 32;
   wmma::store_matrix_sync(c_shared + (localWarpIdx * WMMA_M) * WMMA_N, c_frag, WMMA_N, wmma::mem_row_major);
 
   __syncthreads();
