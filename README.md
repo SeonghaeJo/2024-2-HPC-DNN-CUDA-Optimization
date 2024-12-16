@@ -18,3 +18,8 @@ SNU 확장형고성능컴퓨팅 Final Project
 - Max shared mem per block: 48 KB
 - Shared mem per multiprocessor: 64 KB
 - Max warps per multiprocessor: 32
+
+## Performance Experiments
+|ID|Description|Throughput(sentences/sec)|Commit Number|
+|:-:|:-|:-:|:-:|
+|1|Sequential Conv1D|686|43562e5|

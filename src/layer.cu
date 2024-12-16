@@ -61,64 +61,90 @@ void Permute(Tensor *in, Tensor *out) {
 }
 
 
-// Conv1D Kernel
+// Conv1D Kernel = Input Spread Kernel + Matmul WMMA Kernel
 
-#define CONV_TS 64
-// Number of Tile Iterations = C / CONV_TS = 4096 / 64 
-#define MAX_OS 14
+using namespace nvcuda;
 
-__global__ void conv1d_kernel(
-  float *in, float *w, float *b, float *out,
-  int n, int C, int s, int OC, int K, int os) {
+#define SPREAD_BLOCKDIM 512
 
-  __shared__ float inTile[CONV_TS * SEQ_LEN];
-  extern __shared__ float wTile[];
+__global__ void spread_input_kernel(
+  const float *in, half *in_spread, int n, int C, int s, int K, int os
+) {
+  // in = [n, C, s]
+  // in_spread = [n, C * K, padded_os (==16)]
 
-  float outReg[MAX_OS] = {0.0f};
+  // blockDim = (SPREAD_BLOCKDIM, 1, 1)
+  // gridDim = (n, 1, 1)
 
-  int ocIdx = blockIdx.x;
-  int nIdx = blockIdx.y;
+  in += blockIdx.x * C * s;
+  in_spread += blockIdx.x * C * K * 16;
 
-  w += ocIdx * C * K;
-  in += nIdx * C * s;
+  for (int i = threadIdx.x; i < C * K * os; i += blockDim.x) {
+    int spread_row = i / os;
+    int spread_col = i % os;
+    int in_row = i / (os * K);
+    int in_col = ((i % (os * K)) / os) + (i % os);
+    in_spread[spread_row * 16 + spread_col] = in[in_row * s + in_col];
+  }
+}
 
-  int wIdx = threadIdx.y * K + threadIdx.x;
+#define WMMA_M 16
+#define WMMA_N 16
+#define WMMA_K 16
+#define WMMA_BLOCKDIM 512
+#define WARPS_PER_BLOCK (WMMA_BLOCKDIM / 32) // 16
+#define WMMA_BLOCK_ROWS (WMMA_M * WARPS_PER_BLOCK) // 256
 
-  // Tile Iteration
-  for(int t = 0; t < C; t += CONV_TS) {
+__global__ void matmul_wmma_kernel(
+  const half *a, const half *b, float *c, const float *bias, int lm, int ln, int lk, int os
+) {
+  // a = [OC, C * K] (==w)
+  // b = [n, C * K, padded_os] (Zero-padded in_spread)
+  // c = [n, OC, os] (c without zero padding)
+  // bias = [OC]
+  // lm = OC
+  // ln = 16 (padded os)
+  // lk = C * K
+  // blockDim = (WMMA_BLOCKDIM, 1, 1) -> If WMMA_BLOCKDIM == 512, then 16 warps
+  // gridDim = (lm / WMMA_BLOCK_ROWS, n, 1)
 
-    // Copy from GMEM to SMEM
-    // threadIdx.x <= K - 1  && threadIdx.y <= CONV_TS - 1
-    wTile[wIdx] = w[wIdx];
-    for(int i = wIdx; i < CONV_TS * s; i += CONV_TS * K) {
-      inTile[i] = in[i];
-    }
+  // Move to the appropriate batch
+  b += blockIdx.y * lk * ln;
 
-    __syncthreads();
+  wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K, half, wmma::row_major> a_frag;
+  wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K, half, wmma::row_major> b_frag;
+  wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, float> c_frag;
 
-    float wVal = wTile[wIdx];
-    for(int i = 0; i < os; i++) {
-      outReg[i] += inTile[threadIdx.y * s + (threadIdx.x + i)] * wVal;
-    }
+  wmma::fill_fragment(c_frag, 0.0f);
 
-    // Transfer Tile
-    w += CONV_TS * K;
-    in += CONV_TS * s;
+  int warpIdx = (blockIdx.x * blockDim.x + threadIdx.x) / 32;
+  int globalRow = warpIdx * WMMA_M;
 
-    __syncthreads();
+  for (int t = 0; t < lk; t += WMMA_K) {
+    wmma::load_matrix_sync(a_frag, a + globalRow * lk + t, lk);
+    wmma::load_matrix_sync(b_frag, b + t * WMMA_N, ln);
+
+    wmma::mma_sync(c_frag, a_frag, b_frag, c_frag);
   }
 
-  for(int i = 0; i < os; i++) {
-    // out[nIdx * OC * os + ocIdx * os + i] += outReg[i];
-    atomicAdd(&out[nIdx * OC * os + ocIdx * os + i], outReg[i]);
-  }
+  // c_shared[0:os] = c, c_shared[os:] = zero padding
+  __shared__ __align__(32) float c_shared[WMMA_BLOCK_ROWS * WMMA_N];
 
-  if (threadIdx.y == 0 && threadIdx.x == 0) {
-    for (int i = 0; i < os; i++) {
-      // out[nIdx * OC * os + ocIdx * os + i] += b[ocIdx];
-      atomicAdd(&out[nIdx * OC * os + ocIdx * os + i], b[ocIdx]);
-    }
-  }
+  int localWarpIdx = threadIdx.x / 32;
+  wmma::store_matrix_sync(c_shared + (localWarpIdx * WMMA_M) * WMMA_N, c_frag, WMMA_N, wmma::mem_row_major);
+
+  __syncthreads();
+
+  // Move to the appropriate threadblock in the appropriate batch
+  c += blockIdx.y * lm * os + blockIdx.x * WMMA_BLOCK_ROWS * os;
+  bias += blockIdx.x * WMMA_BLOCK_ROWS;
+  
+  // Copy from c_shared to c except for zero padding
+  for (int i = threadIdx.x; i < WMMA_BLOCK_ROWS * os; i += WMMA_BLOCKDIM) {
+    int cRow = i / os;
+    int cCol = i % os;
+    c[cRow * os + cCol] = c_shared[cRow * WMMA_N + cCol] + bias[cRow];
+  } 
 }
 
 /* Conv1D 
@@ -126,6 +152,8 @@ __global__ void conv1d_kernel(
  * @param [in2]   w: [OC, C, K] 
  * @param [in3]   b: [OC]
  * @param [out] out: [n, OC, os]
+ * @param [in]  in_spread : [n, C * K, padded_os]
+ * padded_os = 16
  *    
  *    In this model, K is 3, 5, 7, or 9, 
  *    with stride = 1, pad = 0, dilation = 1.
@@ -141,7 +169,7 @@ __global__ void conv1d_kernel(
  * 'os' is the output sequence length (14 or 12 or 10 or 8)
  * 'K' is the kernel (or filter) size (3 or 5 or 7 or 9)
  */
-void Conv1D(Tensor *in, Tensor *w, Tensor *b, Tensor *out) {
+void Conv1D(Tensor *in, HalfTensor *w, Tensor *b, Tensor *out, HalfTensor *in_spread) {
   size_t n = in->shape[0];
   size_t C = in->shape[1];
   size_t s = in->shape[2];
@@ -149,10 +177,20 @@ void Conv1D(Tensor *in, Tensor *w, Tensor *b, Tensor *out) {
   size_t K = w->shape[2];
   size_t os = s - K + 1;
 
-  dim3 blockDim(K, CONV_TS, 1); // CONV_TS * K
-  dim3 gridDim(OC, n, 1); // n * OC
+  dim3 blockDim_spread(SPREAD_BLOCKDIM, 1, 1);
+  dim3 gridDim_spread(n, 1, 1);
 
-  conv1d_kernel<<<gridDim, blockDim, CONV_TS * K * sizeof(float)>>>(in->buf, w->buf, b->buf, out->buf, n, C, s, OC, K, os);
+  spread_input_kernel<<<gridDim_spread, blockDim_spread>>>(in->buf, in_spread->buf, n, C, s, K, os);
+  CHECK_CUDA(cudaDeviceSynchronize());
+
+  int lm = OC;
+  int ln = 16; // padded_os
+  int lk = C * K;
+
+  dim3 blockDim_wmma(WMMA_BLOCKDIM, 1, 1);
+  dim3 gridDim_wmma(lm / WMMA_BLOCK_ROWS, n, 1);
+
+  matmul_wmma_kernel<<<gridDim_wmma, blockDim_wmma>>>(w->buf, in_spread->buf, out->buf, b->buf, lm, ln, lk, os);
   CHECK_CUDA(cudaDeviceSynchronize());
 }
 

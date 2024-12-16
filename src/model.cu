@@ -15,10 +15,14 @@
  * _b: Bias parameter
  */
 Parameter *emb_w[NUM_GPUS];
-Parameter *conv0_w[NUM_GPUS], *conv0_b[NUM_GPUS];
-Parameter *conv1_w[NUM_GPUS], *conv1_b[NUM_GPUS];
-Parameter *conv2_w[NUM_GPUS], *conv2_b[NUM_GPUS];
-Parameter *conv3_w[NUM_GPUS], *conv3_b[NUM_GPUS];
+HalfTensor *conv0_w[NUM_GPUS];
+HalfTensor *conv1_w[NUM_GPUS];
+HalfTensor *conv2_w[NUM_GPUS];
+HalfTensor *conv3_w[NUM_GPUS];
+Parameter *conv0_b[NUM_GPUS];
+Parameter *conv1_b[NUM_GPUS];
+Parameter *conv2_b[NUM_GPUS];
+Parameter *conv3_b[NUM_GPUS];
 Parameter *linear0_w[NUM_GPUS], *linear0_b[NUM_GPUS];
 Parameter *linear1_w[NUM_GPUS], *linear1_b[NUM_GPUS];
 Parameter *linear2_w[NUM_GPUS], *linear2_b[NUM_GPUS];
@@ -42,22 +46,22 @@ void alloc_and_set_parameters(float *param, size_t param_size) {
     emb_w[g] = new Parameter({21635, 4096}, param + pos[g]);
     pos[g] += 21635 * 4096; 
 
-    conv0_w[g] = new Parameter({1024, 4096, 3}, param + pos[g]);
+    conv0_w[g] = new HalfTensor({1024, 4096, 3}, param + pos[g]);
     pos[g] += 1024 * 4096 * 3; 
     conv0_b[g] = new Parameter({1024}, param + pos[g]);
     pos[g] += 1024;
 
-    conv1_w[g] = new Parameter({1024, 4096, 5}, param + pos[g]);
+    conv1_w[g] = new HalfTensor({1024, 4096, 5}, param + pos[g]);
     pos[g] += 1024 * 4096 * 5; 
     conv1_b[g] = new Parameter({1024}, param + pos[g]);
     pos[g] += 1024;
 
-    conv2_w[g] = new Parameter({1024, 4096, 7}, param + pos[g]);
+    conv2_w[g] = new HalfTensor({1024, 4096, 7}, param + pos[g]);
     pos[g] += 1024 * 4096 * 7;
     conv2_b[g] = new Parameter({1024}, param + pos[g]);
     pos[g] += 1024;
 
-    conv3_w[g] = new Parameter({1024, 4096, 9}, param + pos[g]);
+    conv3_w[g] = new HalfTensor({1024, 4096, 9}, param + pos[g]);
     pos[g] += 1024 * 4096 * 9;
     conv3_b[g] = new Parameter({1024}, param + pos[g]);
     pos[g] += 1024;
@@ -119,6 +123,10 @@ void free_parameters() {
  */
 Activation *emb_a[NUM_GPUS];
 Activation *permute_a[NUM_GPUS];
+HalfTensor *conv0_in_spread[NUM_GPUS];
+HalfTensor *conv1_in_spread[NUM_GPUS];
+HalfTensor *conv2_in_spread[NUM_GPUS];
+HalfTensor *conv3_in_spread[NUM_GPUS];
 Activation *conv0_a[NUM_GPUS], *pool0_a[NUM_GPUS];
 Activation *conv1_a[NUM_GPUS], *pool1_a[NUM_GPUS];
 Activation *conv2_a[NUM_GPUS], *pool2_a[NUM_GPUS];
@@ -149,6 +157,11 @@ void alloc_activations() {
     linear2_a[g] = new Activation({NUM_SENTENCES / NUM_GPUS, 512});
     linear3_a[g] = new Activation({NUM_SENTENCES / NUM_GPUS, 2});
 
+    conv0_in_spread[g] = new HalfTensor({NUM_SENTENCES / NUM_GPUS, 4096 * 3, 16});
+    conv1_in_spread[g] = new HalfTensor({NUM_SENTENCES / NUM_GPUS, 4096 * 5, 16});
+    conv2_in_spread[g] = new HalfTensor({NUM_SENTENCES / NUM_GPUS, 4096 * 7, 16});
+    conv3_in_spread[g] = new HalfTensor({NUM_SENTENCES / NUM_GPUS, 4096 * 9, 16});
+
     CHECK_CUDA(cudaMalloc(&inputs_d[g], NUM_SENTENCES / NUM_GPUS * SEQ_LEN * sizeof(int)));
   }
 }
@@ -174,6 +187,11 @@ void free_activations() {
     delete linear2_a[g];
     delete linear3_a[g];
 
+    delete conv0_in_spread[g];
+    delete conv1_in_spread[g];
+    delete conv2_in_spread[g];
+    delete conv3_in_spread[g];
+
     CHECK_CUDA(cudaFree(inputs_d[g]));
   }
 }
@@ -190,7 +208,7 @@ void predict_sentiment(int *inputs, float *outputs, size_t n_samples) {
   MPI_Comm_rank(MPI_COMM_WORLD, &mpi_rank);
   if (mpi_rank == 0) {
 
-    #pragma omp parallel for num_threads(NUM_GPUS)
+    // #pragma omp parallel for num_threads(NUM_GPUS)
     for (int g = 0; g < NUM_GPUS; g++) {
 
       CHECK_CUDA(cudaSetDevice(g));
@@ -263,70 +281,70 @@ void predict_sentiment(int *inputs, float *outputs, size_t n_samples) {
         continue;
       }
 
-      Conv1D(permute_a[g], conv0_w[g], conv0_b[g], conv0_a[g]);
+      Conv1D(permute_a[g], conv0_w[g], conv0_b[g], conv0_a[g], conv0_in_spread[g]);
 
       #ifdef DEBUG
-      if (g == 0) {
-        size_t OC = 1024;
-        size_t os = 14;
-        size_t C = 4096;
-        size_t K = 3;
-        size_t s = 16;
+      // if (g == 0) {
+      //   size_t OC = 1024;
+      //   size_t os = 14;
+      //   size_t C = 4096;
+      //   size_t K = 3;
+      //   size_t s = 16;
 
-        size_t n_cuda = permute_a[g]->shape[0];
-        size_t C_cuda = permute_a[g]->shape[1];
-        size_t s_cuda = permute_a[g]->shape[2];
-        size_t OC_cuda = conv0_w[g]->shape[0];
-        size_t K_cuda = conv0_w[g]->shape[2];
-        size_t os_cuda = conv0_a[g]->shape[2];
-        printf("[Conv1D] n = %lu, C = %lu, s = %lu, OC = %lu, K = %lu, os = %lu\n", 
-                n_cuda, C_cuda, s_cuda, OC_cuda, K_cuda, os_cuda);
+      //   size_t n_cuda = permute_a[g]->shape[0];
+      //   size_t C_cuda = permute_a[g]->shape[1];
+      //   size_t s_cuda = permute_a[g]->shape[2];
+      //   size_t OC_cuda = conv0_w[g]->shape[0];
+      //   size_t K_cuda = conv0_w[g]->shape[2];
+      //   size_t os_cuda = conv0_a[g]->shape[2];
+      //   printf("[Conv1D] n = %lu, C = %lu, s = %lu, OC = %lu, K = %lu, os = %lu\n", 
+      //           n_cuda, C_cuda, s_cuda, OC_cuda, K_cuda, os_cuda);
 
-        float *conv0_in_debug = (float *)malloc(sizeof(float) * C * s);
-        float *conv0_w_debug = (float *)malloc(sizeof(float) * OC * C * K);
-        float *conv0_b_debug = (float *)malloc(sizeof(float) * OC);
-        float *conv0_a_debug = (float *)malloc(sizeof(float) * OC * os);
-        float *conv0_a_ans = (float *)malloc(sizeof(float) * OC * os);
-        CHECK_CUDA(cudaMemcpy(conv0_in_debug, permute_a[g]->buf, sizeof(float) * C * s, cudaMemcpyDeviceToHost));
-        CHECK_CUDA(cudaMemcpy(conv0_w_debug, conv0_w[g]->buf, sizeof(float) * OC * C * K, cudaMemcpyDeviceToHost));
-        CHECK_CUDA(cudaMemcpy(conv0_b_debug, conv0_b[g]->buf, sizeof(float) * OC, cudaMemcpyDeviceToHost));
-        CHECK_CUDA(cudaMemcpy(conv0_a_debug, conv0_a[g]->buf, sizeof(float) * OC * os, cudaMemcpyDeviceToHost));
-        for (size_t i = 0; i < OC; i++) {
-          for (size_t j = 0; j < os; j++) {
-            float val = 0.f;
-            for (size_t k = 0; k < C; k++) {
-              for (size_t l = 0; l < K; l++) {
-                val += conv0_in_debug[k * s + j + l] * 
-                        conv0_w_debug[i * C * K + k * K + l];
-              }
-            }
-            conv0_a_ans[i * os + j] = val + conv0_b_debug[i];
-            if ((i == 0 || i == 1) && conv0_a_ans[i * os + j] != conv0_a_debug[i * os + j]) {
-              printf("[i = %lu, j = %lu] ans: %f, cuda: %f, bias: %f\n", i, j, 
-              conv0_a_ans[i * os + j], conv0_a_debug[i * os + j], conv0_b_debug[i]);
-            }
-          }
-        }
-        free(conv0_in_debug);
-        free(conv0_w_debug);
-        free(conv0_b_debug);
-        free(conv0_a_debug);
-        free(conv0_a_ans);
-      }    
+      //   float *conv0_in_debug = (float *)malloc(sizeof(float) * C * s);
+      //   float *conv0_w_debug = (float *)malloc(sizeof(float) * OC * C * K);
+      //   float *conv0_b_debug = (float *)malloc(sizeof(float) * OC);
+      //   float *conv0_a_debug = (float *)malloc(sizeof(float) * OC * os);
+      //   float *conv0_a_ans = (float *)malloc(sizeof(float) * OC * os);
+      //   CHECK_CUDA(cudaMemcpy(conv0_in_debug, permute_a[g]->buf, sizeof(float) * C * s, cudaMemcpyDeviceToHost));
+      //   CHECK_CUDA(cudaMemcpy(conv0_w_debug, conv0_w[g]->buf, sizeof(float) * OC * C * K, cudaMemcpyDeviceToHost));
+      //   CHECK_CUDA(cudaMemcpy(conv0_b_debug, conv0_b[g]->buf, sizeof(float) * OC, cudaMemcpyDeviceToHost));
+      //   CHECK_CUDA(cudaMemcpy(conv0_a_debug, conv0_a[g]->buf, sizeof(float) * OC * os, cudaMemcpyDeviceToHost));
+      //   for (size_t i = 0; i < OC; i++) {
+      //     for (size_t j = 0; j < os; j++) {
+      //       float val = 0.f;
+      //       for (size_t k = 0; k < C; k++) {
+      //         for (size_t l = 0; l < K; l++) {
+      //           val += conv0_in_debug[k * s + j + l] * 
+      //                   conv0_w_debug[i * C * K + k * K + l];
+      //         }
+      //       }
+      //       conv0_a_ans[i * os + j] = val + conv0_b_debug[i];
+      //       if ((i == 0 || i == 1) && conv0_a_ans[i * os + j] != conv0_a_debug[i * os + j]) {
+      //         printf("[i = %lu, j = %lu] ans: %f, cuda: %f, bias: %f\n", i, j, 
+      //         conv0_a_ans[i * os + j], conv0_a_debug[i * os + j], conv0_b_debug[i]);
+      //       }
+      //     }
+      //   }
+      //   free(conv0_in_debug);
+      //   free(conv0_w_debug);
+      //   free(conv0_b_debug);
+      //   free(conv0_a_debug);
+      //   free(conv0_a_ans);
+      // }    
       #endif
 
       ReLU(conv0_a[g]);
       GetMax(conv0_a[g], pool0_a[g]);
 
-      Conv1D(permute_a[g], conv1_w[g], conv1_b[g], conv1_a[g]);
+      Conv1D(permute_a[g], conv1_w[g], conv1_b[g], conv1_a[g], conv1_in_spread[g]);
       ReLU(conv1_a[g]);
       GetMax(conv1_a[g], pool1_a[g]);
 
-      Conv1D(permute_a[g], conv2_w[g], conv2_b[g], conv2_a[g]);
+      Conv1D(permute_a[g], conv2_w[g], conv2_b[g], conv2_a[g], conv2_in_spread[g]);
       ReLU(conv2_a[g]);
       GetMax(conv2_a[g], pool2_a[g]);
 
-      Conv1D(permute_a[g], conv3_w[g], conv3_b[g], conv3_a[g]);
+      Conv1D(permute_a[g], conv3_w[g], conv3_b[g], conv3_a[g], conv3_in_spread[g]);
       ReLU(conv3_a[g]);
       GetMax(conv3_a[g], pool3_a[g]);
 

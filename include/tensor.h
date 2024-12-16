@@ -3,6 +3,8 @@
 #include <vector>
 #include <cstdio>
 
+#include <mma.h>
+
 using std::vector;
 
 /* Macro for checking CUDA errors */
@@ -32,3 +34,15 @@ struct Tensor {
 
 typedef Tensor Parameter;
 typedef Tensor Activation;
+
+struct HalfTensor {
+  size_t ndim = 0;
+  size_t shape[4];
+  half *buf = nullptr;
+
+  HalfTensor(const vector<size_t> &shape_);
+  HalfTensor(const vector<size_t> &shape_, float *buf_);
+  ~HalfTensor();
+
+  size_t num_elem();
+};
