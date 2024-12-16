@@ -20,6 +20,7 @@ SNU 확장형고성능컴퓨팅 Final Project
 - Max warps per multiprocessor: 32
 
 ## Performance Experiments
-|ID|Description|Throughput(sentences/sec)|Commit Number|
-|:-:|:-|:-:|:-:|
-|1|Sequential Conv1D|686|43562e5|
+|ID|Kernel Optimization|Communication Optimization|Throughput(sentences/sec)|Commit Number|
+|:-:|:-|:-|:-:|:-:|
+|1|Naive Conv1D|Sequential Conv1Ds|686|43562e5|
+|2|Conv1D to Input Spread and Matrix WMMA (Tensor core)|Sequential Conv1Ds|4710||

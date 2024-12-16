@@ -2,7 +2,7 @@ CXX=mpic++
 CUX=/usr/local/cuda/bin/nvcc
 
 CFLAGS=-std=c++14 -O3 -Wall -march=native -mavx2 -mfma -mno-avx512f -fopenmp -I/usr/local/cuda/include -Iinclude
-CUDA_CFLAGS:=$(foreach option, $(CFLAGS), -Xcompiler=$(option) -arch=sm_70)
+CUDA_CFLAGS:=$(foreach option, $(CFLAGS), -Xcompiler=$(option)) -arch=sm_75 -gencode=arch=compute_75,code=sm_75
 LDFLAGS=-pthread -L/usr/local/cuda/lib64
 LDLIBS=-lstdc++ -lcudart -lm -lmpi -lmpi_cxx
 
