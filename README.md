@@ -26,8 +26,8 @@ SNU 확장형고성능컴퓨팅 Final Project
 |2|Conv1D to Input Spread and WMMA (Warp Matrix Multiply Accumulate, Use Tensor core)|Sequential Conv1Ds|4710|9635014|
 |3|Add a & b SMEM tiling to WMMA Kernel(50% Occupancy)|Sequential Conv1Ds|9622|07acaef|
 |4|ID3|Use 4 nodes (MPI Scatter/Gather)|29484|afd88a5|
-|5|ID3|Logically Concurrent CONV1Ds|29437||
-|6|Remove c SMEM from WMMA Kernel & Increase WMMA_BLOCKDIM to 1024 (100% Occupancy)|ID5|36542|
+|5|ID3|Logically Concurrent CONV1Ds|29437|67da912|
+|6|Remove c SMEM from WMMA Kernel & Increase WMMA_BLOCKDIM to 1024 (100% Occupancy)|ID5|36542|583ccbe|
 
 ### Performance Experiments ID3 Parameter Tuning
 |ID|WMMA_BLOCKDIM|TSKA|TSKB|Throughput(sentences/sec)|

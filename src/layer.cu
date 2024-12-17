@@ -95,7 +95,7 @@ __global__ void spread_input_kernel(
 #define WARPS_PER_BLOCK (WMMA_BLOCKDIM / 32) // 16
 #define WMMA_BLOCK_ROWS (WMMA_M * WARPS_PER_BLOCK) // 256
 #define WMMA_TSKA 32
-#define WMMA_TSKB 256
+#define WMMA_TSKB 512
 
 __global__ void matmul_wmma_kernel(
   const half *a, const half *b, float *c, const float *bias, float *c_padded, int lm, int ln, int lk, int os
