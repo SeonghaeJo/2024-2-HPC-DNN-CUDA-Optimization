@@ -91,14 +91,14 @@ __global__ void spread_input_kernel(
 #define WMMA_M 16
 #define WMMA_N 16
 #define WMMA_K 16
-#define WMMA_BLOCKDIM 512
+#define WMMA_BLOCKDIM 1024
 #define WARPS_PER_BLOCK (WMMA_BLOCKDIM / 32) // 16
 #define WMMA_BLOCK_ROWS (WMMA_M * WARPS_PER_BLOCK) // 256
 #define WMMA_TSKA 32
-#define WMMA_TSKB 512
+#define WMMA_TSKB 256
 
 __global__ void matmul_wmma_kernel(
-  const half *a, const half *b, float *c, const float *bias, int lm, int ln, int lk, int os
+  const half *a, const half *b, float *c, const float *bias, float *c_padded, int lm, int ln, int lk, int os
 ) {
   // a = [OC, C * K] (==w)
   // b = [n, C * K, padded_os] (Zero-padded in_spread)
@@ -157,22 +157,20 @@ __global__ void matmul_wmma_kernel(
     }
   }
 
-  // c_shared[0:os] = c, c_shared[os:] = zero padding
-  __shared__ __align__(32) float c_shared[WMMA_BLOCK_ROWS * WMMA_N];
-
-  wmma::store_matrix_sync(c_shared + (localWarpIdx * WMMA_M) * WMMA_N, c_frag, WMMA_N, wmma::mem_row_major);
-
-  __syncthreads();
-
   // Move to the appropriate threadblock in the appropriate batch
+  c_padded += blockIdx.y * lm * WMMA_N + blockIdx.x * WMMA_BLOCK_ROWS * WMMA_N;
   c += blockIdx.y * lm * os + blockIdx.x * WMMA_BLOCK_ROWS * os;
   bias += blockIdx.x * WMMA_BLOCK_ROWS;
+
+  wmma::store_matrix_sync(c_padded + (localWarpIdx * WMMA_M) * WMMA_N, c_frag, WMMA_N, wmma::mem_row_major);
+
+  __syncthreads();
   
   // Copy from c_shared to c except for zero padding
   for (int i = threadIdx.x; i < WMMA_BLOCK_ROWS * os; i += WMMA_BLOCKDIM) {
     int cRow = i / os;
     int cCol = i % os;
-    c[cRow * os + cCol] = c_shared[cRow * WMMA_N + cCol] + bias[cRow];
+    c[i] = c_padded[cRow * WMMA_N + cCol] + bias[cRow];
   } 
 }
 
@@ -181,7 +179,8 @@ __global__ void matmul_wmma_kernel(
  * @param [in2]   w: [OC, C, K] 
  * @param [in3]   b: [OC]
  * @param [out] out: [n, OC, os]
- * @param [in]  in_spread : [n, C * K, padded_os]
+ * @param [in]  in_spread  : [n, C * K, padded_os]
+ * @param [in]  out_padded : [n, OC, padded_os]
  * padded_os = 16
  *    
  *    In this model, K is 3, 5, 7, or 9, 
@@ -198,7 +197,10 @@ __global__ void matmul_wmma_kernel(
  * 'os' is the output sequence length (14 or 12 or 10 or 8)
  * 'K' is the kernel (or filter) size (3 or 5 or 7 or 9)
  */
-void Conv1D(Tensor *in, HalfTensor *w, Tensor *b, Tensor *out, HalfTensor *in_spread, cudaStream_t stream) {
+void Conv1D(
+  Tensor *in, HalfTensor *w, Tensor *b, Tensor *out, 
+  HalfTensor *in_spread, Tensor *out_padded,
+  cudaStream_t stream) {
   size_t n = in->shape[0];
   size_t C = in->shape[1];
   size_t s = in->shape[2];
@@ -218,7 +220,7 @@ void Conv1D(Tensor *in, HalfTensor *w, Tensor *b, Tensor *out, HalfTensor *in_sp
   dim3 blockDim_wmma(WMMA_BLOCKDIM, 1, 1);
   dim3 gridDim_wmma(lm / WMMA_BLOCK_ROWS, n, 1);
 
-  matmul_wmma_kernel<<<gridDim_wmma, blockDim_wmma, 0, stream>>>(w->buf, in_spread->buf, out->buf, b->buf, lm, ln, lk, os);
+  matmul_wmma_kernel<<<gridDim_wmma, blockDim_wmma, 0, stream>>>(w->buf, in_spread->buf, out->buf, b->buf, out_padded->buf, lm, ln, lk, os);
 }
 
 

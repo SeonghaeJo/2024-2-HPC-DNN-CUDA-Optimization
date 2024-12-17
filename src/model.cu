@@ -125,6 +125,10 @@ Activation *conv0_a[NUM_GPUS], *pool0_a[NUM_GPUS];
 Activation *conv1_a[NUM_GPUS], *pool1_a[NUM_GPUS];
 Activation *conv2_a[NUM_GPUS], *pool2_a[NUM_GPUS];
 Activation *conv3_a[NUM_GPUS], *pool3_a[NUM_GPUS];
+Activation *conv0_out_padded[NUM_GPUS];
+Activation *conv1_out_padded[NUM_GPUS];
+Activation *conv2_out_padded[NUM_GPUS];
+Activation *conv3_out_padded[NUM_GPUS];
 Activation *concat_a[NUM_GPUS];
 Activation *linear0_a[NUM_GPUS], *linear1_a[NUM_GPUS], *linear2_a[NUM_GPUS], *linear3_a[NUM_GPUS];
 
@@ -166,6 +170,11 @@ void alloc_activations() {
     conv1_in[g] = new Activation({NUM_SENTENCES / NUM_NODES / NUM_GPUS, 4096, SEQ_LEN});
     conv2_in[g] = new Activation({NUM_SENTENCES / NUM_NODES / NUM_GPUS, 4096, SEQ_LEN});
     conv3_in[g] = new Activation({NUM_SENTENCES / NUM_NODES / NUM_GPUS, 4096, SEQ_LEN});
+
+    conv0_out_padded[g] = new Activation({NUM_SENTENCES / NUM_NODES / NUM_GPUS, 1024, 16});
+    conv1_out_padded[g] = new Activation({NUM_SENTENCES / NUM_NODES / NUM_GPUS, 1024, 16});
+    conv2_out_padded[g] = new Activation({NUM_SENTENCES / NUM_NODES / NUM_GPUS, 1024, 16});
+    conv3_out_padded[g] = new Activation({NUM_SENTENCES / NUM_NODES / NUM_GPUS, 1024, 16});
 
     CHECK_CUDA(cudaMalloc(&inputs_d[g], NUM_SENTENCES / NUM_NODES / NUM_GPUS * SEQ_LEN * sizeof(int)));
 
@@ -210,6 +219,11 @@ void free_activations() {
     delete conv1_in[g];
     delete conv2_in[g];
     delete conv3_in[g];
+
+    delete conv0_out_padded[g];
+    delete conv1_out_padded[g];
+    delete conv2_out_padded[g];
+    delete conv3_out_padded[g];
 
     for (int i = 0; i < 4; i++) {
       CHECK_CUDA(cudaStreamDestroy(streams[g][i]));
@@ -261,19 +275,19 @@ void predict_sentiment(int *inputs, float *outputs, size_t n_samples) {
     CHECK_CUDA(cudaMemcpyAsync(conv3_in[g]->buf, permute_a[g]->buf, 
                               NUM_SENTENCES / NUM_NODES / NUM_GPUS * 4096 * SEQ_LEN * sizeof(float),
                               cudaMemcpyDeviceToDevice, streams[g][3]));
-    Conv1D(conv3_in[g], conv3_w[g], conv3_b[g], conv3_a[g], conv3_in_spread[g], streams[g][3]);
+    Conv1D(conv3_in[g], conv3_w[g], conv3_b[g], conv3_a[g], conv3_in_spread[g], conv3_out_padded[g], streams[g][3]);
 
     CHECK_CUDA(cudaMemcpyAsync(conv2_in[g]->buf, permute_a[g]->buf, 
                               NUM_SENTENCES / NUM_NODES / NUM_GPUS * 4096 * SEQ_LEN * sizeof(float),
                               cudaMemcpyDeviceToDevice, streams[g][2]));
-    Conv1D(conv2_in[g], conv2_w[g], conv2_b[g], conv2_a[g], conv2_in_spread[g], streams[g][2]);
+    Conv1D(conv2_in[g], conv2_w[g], conv2_b[g], conv2_a[g], conv2_in_spread[g], conv2_out_padded[g], streams[g][2]);
 
     CHECK_CUDA(cudaMemcpyAsync(conv1_in[g]->buf, permute_a[g]->buf, 
                               NUM_SENTENCES / NUM_NODES / NUM_GPUS * 4096 * SEQ_LEN * sizeof(float),
                               cudaMemcpyDeviceToDevice, streams[g][1]));
-    Conv1D(conv1_in[g], conv1_w[g], conv1_b[g], conv1_a[g], conv1_in_spread[g], streams[g][1]);
+    Conv1D(conv1_in[g], conv1_w[g], conv1_b[g], conv1_a[g], conv1_in_spread[g], conv1_out_padded[g], streams[g][1]);
 
-    Conv1D(permute_a[g], conv0_w[g], conv0_b[g], conv0_a[g], conv0_in_spread[g], streams[g][0]);
+    Conv1D(permute_a[g], conv0_w[g], conv0_b[g], conv0_a[g], conv0_in_spread[g], conv0_out_padded[g], streams[g][0]);
 
     ReLU(conv0_a[g]);
     GetMax(conv0_a[g], pool0_a[g]);

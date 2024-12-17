@@ -23,10 +23,11 @@ SNU 확장형고성능컴퓨팅 Final Project
 |ID|Kernel Optimization|Communication Optimization|Throughput(sentences/sec)|Commit Number|
 |:-:|:-|:-|:-:|:-:|
 |1|Naive Conv1D|Sequential Conv1Ds|686|43562e5|
-|2|Conv1D to Input Spread and Matrix WMMA (Tensor core)|Sequential Conv1Ds|4710|9635014|
-|3|Add a & b SMEM tiling to Matrix WMMA Kernel|Sequential Conv1Ds|9622|07acaef|
+|2|Conv1D to Input Spread and WMMA (Warp Matrix Multiply Accumulate, Use Tensor core)|Sequential Conv1Ds|4710|9635014|
+|3|Add a & b SMEM tiling to WMMA Kernel(50% Occupancy)|Sequential Conv1Ds|9622|07acaef|
 |4|ID3|Use 4 nodes (MPI Scatter/Gather)|29484|afd88a5|
-|4|ID3|Logically Concurrent CONV1Ds|29437||
+|5|ID3|Logically Concurrent CONV1Ds|29437||
+|6|Remove c SMEM from WMMA Kernel & Increase WMMA_BLOCKDIM to 1024 (100% Occupancy)|ID5|36542|
 
 ### Performance Experiments ID3 Parameter Tuning
 |ID|WMMA_BLOCKDIM|TSKA|TSKB|Throughput(sentences/sec)|
