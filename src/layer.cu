@@ -198,7 +198,7 @@ __global__ void matmul_wmma_kernel(
  * 'os' is the output sequence length (14 or 12 or 10 or 8)
  * 'K' is the kernel (or filter) size (3 or 5 or 7 or 9)
  */
-void Conv1D(Tensor *in, HalfTensor *w, Tensor *b, Tensor *out, HalfTensor *in_spread) {
+void Conv1D(Tensor *in, HalfTensor *w, Tensor *b, Tensor *out, HalfTensor *in_spread, cudaStream_t stream) {
   size_t n = in->shape[0];
   size_t C = in->shape[1];
   size_t s = in->shape[2];
@@ -209,8 +209,7 @@ void Conv1D(Tensor *in, HalfTensor *w, Tensor *b, Tensor *out, HalfTensor *in_sp
   dim3 blockDim_spread(SPREAD_BLOCKDIM, 1, 1);
   dim3 gridDim_spread(n, 1, 1);
 
-  spread_input_kernel<<<gridDim_spread, blockDim_spread>>>(in->buf, in_spread->buf, n, C, s, K, os);
-  CHECK_CUDA(cudaDeviceSynchronize());
+  spread_input_kernel<<<gridDim_spread, blockDim_spread, 0, stream>>>(in->buf, in_spread->buf, n, C, s, K, os);
 
   int lm = OC;
   int ln = 16; // padded_os
@@ -219,8 +218,7 @@ void Conv1D(Tensor *in, HalfTensor *w, Tensor *b, Tensor *out, HalfTensor *in_sp
   dim3 blockDim_wmma(WMMA_BLOCKDIM, 1, 1);
   dim3 gridDim_wmma(lm / WMMA_BLOCK_ROWS, n, 1);
 
-  matmul_wmma_kernel<<<gridDim_wmma, blockDim_wmma>>>(w->buf, in_spread->buf, out->buf, b->buf, lm, ln, lk, os);
-  CHECK_CUDA(cudaDeviceSynchronize());
+  matmul_wmma_kernel<<<gridDim_wmma, blockDim_wmma, 0, stream>>>(w->buf, in_spread->buf, out->buf, b->buf, lm, ln, lk, os);
 }
 
 
