@@ -8,22 +8,23 @@
 
 #define NUM_GPUS 4
 #define NUM_NODES 4
+#define NUM_PIPELINES 4
 
-cudaStream_t streams[NUM_GPUS][4];
+cudaStream_t streams[NUM_GPUS][4][NUM_PIPELINES];
 
 /* [Model Parameters]
  * _w: Weight parameter
  * _b: Bias parameter
  */
 Parameter *emb_w[NUM_GPUS];
-HalfTensor *conv0_w[NUM_GPUS];
-HalfTensor *conv1_w[NUM_GPUS];
-HalfTensor *conv2_w[NUM_GPUS];
-HalfTensor *conv3_w[NUM_GPUS];
-Parameter *conv0_b[NUM_GPUS];
-Parameter *conv1_b[NUM_GPUS];
-Parameter *conv2_b[NUM_GPUS];
-Parameter *conv3_b[NUM_GPUS];
+HalfTensor *conv0_w[NUM_GPUS][NUM_PIPELINES];
+HalfTensor *conv1_w[NUM_GPUS][NUM_PIPELINES];
+HalfTensor *conv2_w[NUM_GPUS][NUM_PIPELINES];
+HalfTensor *conv3_w[NUM_GPUS][NUM_PIPELINES];
+Parameter *conv0_b[NUM_GPUS][NUM_PIPELINES];
+Parameter *conv1_b[NUM_GPUS][NUM_PIPELINES];
+Parameter *conv2_b[NUM_GPUS][NUM_PIPELINES];
+Parameter *conv3_b[NUM_GPUS][NUM_PIPELINES];
 Parameter *linear0_w[NUM_GPUS], *linear0_b[NUM_GPUS];
 Parameter *linear1_w[NUM_GPUS], *linear1_b[NUM_GPUS];
 Parameter *linear2_w[NUM_GPUS], *linear2_b[NUM_GPUS];
@@ -40,24 +41,52 @@ void alloc_and_set_parameters(float *param, size_t param_size) {
     emb_w[g] = new Parameter({21635, 4096}, param + pos[g]);
     pos[g] += 21635 * 4096; 
 
-    conv0_w[g] = new HalfTensor({1024, 4096, 3}, param + pos[g]);
+    for (int p = 0; p < NUM_PIPELINES; p++) {
+      conv0_w[g][p] = new HalfTensor({1024, 4096, 3}, param + pos[g]);
+    }
+
     pos[g] += 1024 * 4096 * 3; 
-    conv0_b[g] = new Parameter({1024}, param + pos[g]);
+
+    for (int p = 0; p < NUM_PIPELINES; p++) {
+      conv0_b[g][p] = new Parameter({1024}, param + pos[g]);
+    } 
+    
     pos[g] += 1024;
 
-    conv1_w[g] = new HalfTensor({1024, 4096, 5}, param + pos[g]);
+    for (int p = 0; p < NUM_PIPELINES; p++) {
+      conv1_w[g][p] = new HalfTensor({1024, 4096, 5}, param + pos[g]);
+    }
+
     pos[g] += 1024 * 4096 * 5; 
-    conv1_b[g] = new Parameter({1024}, param + pos[g]);
+
+    for (int p = 0; p < NUM_PIPELINES; p++) {
+      conv1_b[g][p] = new Parameter({1024}, param + pos[g]);
+    }
+    
     pos[g] += 1024;
 
-    conv2_w[g] = new HalfTensor({1024, 4096, 7}, param + pos[g]);
+    for (int p = 0; p < NUM_PIPELINES; p++) {
+      conv2_w[g][p] = new HalfTensor({1024, 4096, 7}, param + pos[g]);
+    }
+
     pos[g] += 1024 * 4096 * 7;
-    conv2_b[g] = new Parameter({1024}, param + pos[g]);
+
+    for (int p = 0; p < NUM_PIPELINES; p++) {
+      conv2_b[g][p] = new Parameter({1024}, param + pos[g]);
+    }
+    
     pos[g] += 1024;
 
-    conv3_w[g] = new HalfTensor({1024, 4096, 9}, param + pos[g]);
+    for (int p = 0; p < NUM_PIPELINES; p++) {
+      conv3_w[g][p] = new HalfTensor({1024, 4096, 9}, param + pos[g]);
+    }
+
     pos[g] += 1024 * 4096 * 9;
-    conv3_b[g] = new Parameter({1024}, param + pos[g]);
+
+    for (int p = 0; p < NUM_PIPELINES; p++) {
+      conv3_b[g][p] = new Parameter({1024}, param + pos[g]);
+    }
+    
     pos[g] += 1024;
 
     linear0_w[g] = new Parameter({2048, 4096}, param + pos[g]);
@@ -93,14 +122,18 @@ void free_parameters() {
     CHECK_CUDA(cudaSetDevice(g));
 
     delete emb_w[g];
-    delete conv0_w[g];
-    delete conv0_b[g];
-    delete conv1_w[g];
-    delete conv1_b[g];
-    delete conv2_w[g];
-    delete conv2_b[g];
-    delete conv3_w[g];
-    delete conv3_b[g];
+
+    for (int p = 0; p < NUM_PIPELINES; p++) {
+      delete conv0_w[g][p];
+      delete conv0_b[g][p];
+      delete conv1_w[g][p];
+      delete conv1_b[g][p];
+      delete conv2_w[g][p];
+      delete conv2_b[g][p];
+      delete conv3_w[g][p];
+      delete conv3_b[g][p];
+    }
+    
     delete linear0_w[g];
     delete linear0_b[g];
     delete linear1_w[g];
@@ -179,7 +212,9 @@ void alloc_activations() {
     CHECK_CUDA(cudaMalloc(&inputs_d[g], NUM_SENTENCES / NUM_NODES / NUM_GPUS * SEQ_LEN * sizeof(int)));
 
     for (int i = 0; i < 4; i++) {
-      CHECK_CUDA(cudaStreamCreate(&streams[g][i]));
+      for (int p = 0; p < NUM_PIPELINES; p++) {
+        CHECK_CUDA(cudaStreamCreate(&streams[g][i][p]));
+      }
     }
   }
 
@@ -226,7 +261,9 @@ void free_activations() {
     delete conv3_out_padded[g];
 
     for (int i = 0; i < 4; i++) {
-      CHECK_CUDA(cudaStreamDestroy(streams[g][i]));
+      for (int p = 0; p < NUM_PIPELINES; p++) {
+        CHECK_CUDA(cudaStreamDestroy(streams[g][i][p]));
+      }
     }
 
     CHECK_CUDA(cudaFree(inputs_d[g]));
@@ -272,22 +309,37 @@ void predict_sentiment(int *inputs, float *outputs, size_t n_samples) {
 
     Permute(emb_a[g], permute_a[g]);
 
-    CHECK_CUDA(cudaMemcpyAsync(conv3_in[g]->buf, permute_a[g]->buf, 
-                              NUM_SENTENCES / NUM_NODES / NUM_GPUS * 4096 * SEQ_LEN * sizeof(float),
-                              cudaMemcpyDeviceToDevice, streams[g][3]));
-    Conv1D(conv3_in[g], conv3_w[g], conv3_b[g], conv3_a[g], conv3_in_spread[g], conv3_out_padded[g], streams[g][3]);
+    for (int p = 0; p < NUM_PIPELINES; p++) {
+      CHECK_CUDA(cudaMemcpyAsync(conv3_in[g]->buf + p * NUM_SENTENCES / NUM_NODES / NUM_GPUS / NUM_PIPELINES * 4096 * SEQ_LEN, 
+                              permute_a[g]->buf + p * NUM_SENTENCES / NUM_NODES / NUM_GPUS / NUM_PIPELINES * 4096 * SEQ_LEN, 
+                              NUM_SENTENCES / NUM_NODES / NUM_GPUS / NUM_PIPELINES * 4096 * SEQ_LEN * sizeof(float),
+                              cudaMemcpyDeviceToDevice, streams[g][3][p]));
+      Conv1D(conv3_in[g], conv3_w[g][p], conv3_b[g][p], conv3_a[g], conv3_in_spread[g], conv3_out_padded[g], 
+              streams[g][3][p], p, NUM_PIPELINES);
+    }
 
-    CHECK_CUDA(cudaMemcpyAsync(conv2_in[g]->buf, permute_a[g]->buf, 
-                              NUM_SENTENCES / NUM_NODES / NUM_GPUS * 4096 * SEQ_LEN * sizeof(float),
-                              cudaMemcpyDeviceToDevice, streams[g][2]));
-    Conv1D(conv2_in[g], conv2_w[g], conv2_b[g], conv2_a[g], conv2_in_spread[g], conv2_out_padded[g], streams[g][2]);
+    for (int p = 0; p < NUM_PIPELINES; p++) {
+      CHECK_CUDA(cudaMemcpyAsync(conv2_in[g]->buf + p * NUM_SENTENCES / NUM_NODES / NUM_GPUS / NUM_PIPELINES * 4096 * SEQ_LEN, 
+                              permute_a[g]->buf + p * NUM_SENTENCES / NUM_NODES / NUM_GPUS / NUM_PIPELINES * 4096 * SEQ_LEN, 
+                              NUM_SENTENCES / NUM_NODES / NUM_GPUS / NUM_PIPELINES * 4096 * SEQ_LEN * sizeof(float),
+                              cudaMemcpyDeviceToDevice, streams[g][2][p]));
+      Conv1D(conv2_in[g], conv2_w[g][p], conv2_b[g][p], conv2_a[g], conv2_in_spread[g], conv2_out_padded[g], 
+              streams[g][2][p], p, NUM_PIPELINES);
+    }
 
-    CHECK_CUDA(cudaMemcpyAsync(conv1_in[g]->buf, permute_a[g]->buf, 
-                              NUM_SENTENCES / NUM_NODES / NUM_GPUS * 4096 * SEQ_LEN * sizeof(float),
-                              cudaMemcpyDeviceToDevice, streams[g][1]));
-    Conv1D(conv1_in[g], conv1_w[g], conv1_b[g], conv1_a[g], conv1_in_spread[g], conv1_out_padded[g], streams[g][1]);
+    for (int p = 0; p < NUM_PIPELINES; p++) {
+      CHECK_CUDA(cudaMemcpyAsync(conv1_in[g]->buf + p * NUM_SENTENCES / NUM_NODES / NUM_GPUS / NUM_PIPELINES * 4096 * SEQ_LEN, 
+                              permute_a[g]->buf + p * NUM_SENTENCES / NUM_NODES / NUM_GPUS / NUM_PIPELINES * 4096 * SEQ_LEN, 
+                              NUM_SENTENCES / NUM_NODES / NUM_GPUS / NUM_PIPELINES * 4096 * SEQ_LEN * sizeof(float),
+                              cudaMemcpyDeviceToDevice, streams[g][1][p]));
+      Conv1D(conv1_in[g], conv1_w[g][p], conv1_b[g][p], conv1_a[g], conv1_in_spread[g], conv1_out_padded[g], 
+              streams[g][1][p], p, NUM_PIPELINES);
+    }
 
-    Conv1D(permute_a[g], conv0_w[g], conv0_b[g], conv0_a[g], conv0_in_spread[g], conv0_out_padded[g], streams[g][0]);
+    for (int p = 0; p < NUM_PIPELINES; p++) {
+      Conv1D(permute_a[g], conv0_w[g][p], conv0_b[g][p], conv0_a[g], conv0_in_spread[g], conv0_out_padded[g], 
+              streams[g][0][p], p, NUM_PIPELINES);
+    }
 
     ReLU(conv0_a[g]);
     GetMax(conv0_a[g], pool0_a[g]);

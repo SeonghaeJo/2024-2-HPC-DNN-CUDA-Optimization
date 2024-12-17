@@ -28,6 +28,7 @@ SNU 확장형고성능컴퓨팅 Final Project
 |4|ID3|Use 4 nodes (MPI Scatter/Gather)|29484|afd88a5|
 |5|ID3|Logically Concurrent CONV1Ds|29437|67da912|
 |6|Remove c SMEM from WMMA Kernel & Increase WMMA_BLOCKDIM to 1024 (100% Occupancy)|ID5|36542|583ccbe|
+|7|ID6|Split WMMA with Pipelining|36800|| 
 
 ### Performance Experiments ID3 Parameter Tuning
 |ID|WMMA_BLOCKDIM|TSKA|TSKB|Throughput(sentences/sec)|

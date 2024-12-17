@@ -200,7 +200,7 @@ __global__ void matmul_wmma_kernel(
 void Conv1D(
   Tensor *in, HalfTensor *w, Tensor *b, Tensor *out, 
   HalfTensor *in_spread, Tensor *out_padded,
-  cudaStream_t stream) {
+  cudaStream_t stream, int p, int num_pipelines) {
   size_t n = in->shape[0];
   size_t C = in->shape[1];
   size_t s = in->shape[2];
@@ -209,18 +209,27 @@ void Conv1D(
   size_t os = s - K + 1;
 
   dim3 blockDim_spread(SPREAD_BLOCKDIM, 1, 1);
-  dim3 gridDim_spread(n, 1, 1);
+  dim3 gridDim_spread(n / num_pipelines, 1, 1);
 
-  spread_input_kernel<<<gridDim_spread, blockDim_spread, 0, stream>>>(in->buf, in_spread->buf, n, C, s, K, os);
+  spread_input_kernel<<<gridDim_spread, blockDim_spread, 0, stream>>>(
+    in->buf + p * n / num_pipelines * C * s, 
+    in_spread->buf + p * n / num_pipelines * C * K * 16, 
+    n / num_pipelines, C, s, K, os);
 
   int lm = OC;
   int ln = 16; // padded_os
   int lk = C * K;
 
   dim3 blockDim_wmma(WMMA_BLOCKDIM, 1, 1);
-  dim3 gridDim_wmma(lm / WMMA_BLOCK_ROWS, n, 1);
+  dim3 gridDim_wmma(lm / WMMA_BLOCK_ROWS, n / num_pipelines, 1);
 
-  matmul_wmma_kernel<<<gridDim_wmma, blockDim_wmma, 0, stream>>>(w->buf, in_spread->buf, out->buf, b->buf, out_padded->buf, lm, ln, lk, os);
+  matmul_wmma_kernel<<<gridDim_wmma, blockDim_wmma, 0, stream>>>(
+    w->buf, 
+    in_spread->buf + p * n / num_pipelines * C * K * 16, 
+    out->buf + p * n / num_pipelines * OC * os, 
+    b->buf, 
+    out_padded->buf + p * n / num_pipelines * OC * 16, 
+    lm, ln, lk, os);
 }
 
 
