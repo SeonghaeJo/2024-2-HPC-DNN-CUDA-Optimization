@@ -12,12 +12,12 @@
   - 아래 예시는 n=1, OC = 2, C=2, S=6, K=3, os=4일 때 입력(in)을 펼친 후 행렬곱으로 바꾸는 과정을 pseudo code로 나타낸 것이다.
   ```
   // Before spread
-  w[0] = [
-            [[a0, b0, c0],
-            [d0, e0, f0]],
-            [[a1, b1, c1],
-            [d1, e1, f1]]
-          ]
+  w = [
+        [[a0, b0, c0],
+        [d0, e0, f0]],
+        [[a1, b1, c1],
+        [d1, e1, f1]]
+      ]
   in = [[0, 1, 2, 3, 4, 5],
         [6, 7, 8, 9, 10, 11]]
 
@@ -75,3 +75,8 @@
 |4개 노드에 연산 분배|29484|
 |shared memory 절약을 위해 c_padded를 shared memory에서 global memory로 변경 후 파라미터 튜닝을 통해 theoretical occupancy를 100%로 개선|36542|
 |Conv1D를 파이프라이닝으로 분할|37060 (최종 성능)|
+
+## Further Ideas
+- Conv1D 입력의 sample axis를 in_spread의 column에 붙이면 추가적인 최적화가 가능하다. 현재는 zero padding을 추가하여 [n, C * K, 16] 형태의 in_spread를 사용하기 때문에, matrix multiplication할 때 column 크기가 16이기 때문에 타일링에 한계가 있기 때문이다.
+- 예를 들어, 16개의 샘플을 column으로 이어붙여 [n/16, C * K, 16 * os] 형태의 in_spread를 만들면 zero padding 없이 텐서 코어를 활용할 수 있다.
+- 또한 os = 14, 12, 10, 8인 4개의 Conv1D 연산을 병렬 실행하기 위해, [n/16, C * K, 16 * total_os] (`total_os=14+12+10+8=44`) 형태로 spread하면 더욱 최적화할 수 있다.
