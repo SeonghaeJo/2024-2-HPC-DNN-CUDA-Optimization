@@ -9,7 +9,7 @@ SNU 확장형고성능컴퓨팅 Final Project
 - CUDA Runtime Version: 11.8
 - Compute Capability: 7.5
 - Total number of SMs: 72   
-- Max threads per block: 1024 (Less than 1024)   
+- Max threads per block: 1024 
 - Max threads per multiprocessor: 1024
 - Threads per warp: 32
 - Max regs per block: 65536
